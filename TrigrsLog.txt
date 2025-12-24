@@ -1,0 +1,44 @@
+ 
+ Starting TRIGRS 2.0.06b 14 Sep 2009
+ Date 12/22/2025
+ Time 16:32:41
+ initialization file -->tr_in.txt                                                                                                                                                                                                                                                      
+ -- LISTING OF INITIALIZATION FILE --
+ Name of project (up to 255 characters)                                                                                                                                                                                                                         
+ TRIGRS, version 2, Tutorial                                                                                                                                                                                                                                    
+ imax, row, col, nwf, tx, nmaxx                                                                                                                                                                                                                                 
+   706565  1553  879  1305307  1  100000
+ nzs, mmax, nper,  zmin,  uww,     t, zones                                                                                                                                                                                                                     
+   10  100  6  1.000000E-03  9800.00  10800.0  1
+ zmax,   depth,   rizero,  Min_Slope_Angle (degrees)                                                                                                                                                                                                            
+   2.40000  3.00000  1.000000E-06  0.000000
+ zone:   1
+ cohesion,phi,  uws,   diffus,   K-sat, Theta-sat,Theta-res,Alpha                                                                                                                                                                                               
+   3500.00  35.0000  22000.0  1.320000E-03  1.320000E-05  0.450000  5.000000E-02 -0.500000
+ Negative or zero value of Alpha for property zone  1
+ Saturated infiltration model will be used for cells in zone  1 .
+ cri(1), cri(2),cri(3), ..., cri(nper)                                                                                                                                                                                                                          
+   3.000000E-06  5.000000E-07  4.000000E-07  3.000000E-07  2.000000E-07  1.000000E-07
+ capt(1), capt(2),capt(3), ..., capt(n), capt(n+1)                                                                                                                                                                                                              
+   0.000000  17280.0  21600.0  43200.0  86400.0  172800.  216000.
+ File name of slope angle grid (slofil)                                                                                                                                                                                                                         
+ Data\tutorial\slope.asc                                                                                                                                                                                                                                        
+ File name of property zone grid (zonfil)                                                                                                                                                                                                                       
+ Data\tutorial\zones.asc                                                                                                                                                                                                                                        
+ File name of depth grid (zfil)                                                                                                                                                                                                                                 
+ none                                                                                                                                                                                                                                                           
+ File name of initial depth of water table grid   (depfil)                                                                                                                                                                                                      
+ none                                                                                                                                                                                                                                                           
+ File name of initial infiltration rate grid   (rizerofil)                                                                                                                                                                                                      
+ none                                                                                                                                                                                                                                                           
+ List of file name(s) of rainfall intensity for each period, (rifil())                                                                                                                                                                                          
+ Data\tutorial\ri1.asc                                                                                                                                                                                                                                          
+ Data\tutorial\ri2.asc                                                                                                                                                                                                                                          
+ Data\tutorial\ri3.asc                                                                                                                                                                                                                                          
+ Data\tutorial\ri4.asc                                                                                                                                                                                                                                          
+ Data\tutorial\ri5.asc                                                                                                                                                                                                                                          
+ Data\tutorial\ri6.asc                                                                                                                                                                                                                                          
+ File name of grid of D8 runoff receptor cell numbers (nxtfil)                                                                                                                                                                                                  
+ Data\tutorial\TIdscelGrid_tutorial.asc                                                                                                                                                                                                                         
+ File name of list of defining runoff computation order (ndxfil)                                                                                                                                                                                                
+ Data\tutorial\TIcelindxList_tutorial.txt               

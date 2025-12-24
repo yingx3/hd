@@ -1,0 +1,117 @@
+ 
+ Starting TopoIndex
+ Version: 1.0.04, 29 July 2008  
+ Date: 12/07/2024
+ Time: 16:56:20
+ 
+ -- LISTING OF INITIALIZATION DATA --
+ Name of project (up to 255 characters)                                                                                                                                                                                                                         
+ Tutorial example data for TopoIndex analysis                                                                                                                                                                                                                   
+ Rows, Columns, flow-direction numbering scheme (ESRI=1, TopoIndex=2)                                                                                                                                                                                           
+   1553  879  1
+ Exponent, Number of iterations                                                                                                                                                                                                                                 
+  -1.00000  2000
+ Name of elevation grid file                                                                                                                                                                                                                                    
+ data\tutorial\dem.asc                                                                                                                                                                                                                                          
+ Name of direction grid                                                                                                                                                                                                                                         
+ data\tutorial\directions.asc                                                                                                                                                                                                                                   
+ Save listing of D8 downslope neighbor cells?  Enter T (.true.) or F (.false.)                                                                                                                                                                                  
+  T
+ Save grid of D8 downslope neighbor cells? Enter T (.true.) or F (.false.)                                                                                                                                                                                      
+  T
+ Save cell index number grid?  Enter T (.true.) or F (.false.)                                                                                                                                                                                                  
+  T
+ Save list of cell number and corresponding index number? Enter T (.true.) or F (.false.)                                                                                                                                                                       
+  T
+ Save flow-direction grid remapped from ESRI to TopoIndex? Enter T (.true.) or F (.false.)                                                                                                                                                                      
+  T
+ Name of folder to store output?                                                                                                                                                                                                                                
+ data\tutorial\                                                                                                                                                                                                                  
+ ID code for output files? (8 characters or less)                                                                                                                                                                                                               
+ tutorial
+ -- END OF INITIALIZATION DATA --
+ 
+ Tutorial example data for TopoIndex analysis                                                                                                                                                                                                                   
+ 
+ Parameters for file--> data\tutorial\dem.asc                                                                                                                                                                                                                                          
+ Data cells, Rows, Columns
+   706565  1553  879
+ Reading flow-direction data
+ 
+          Listing of grid mismatches
+ Mismatch counter, Row, Column, Direction code
+   0 ,  --,   --,  --
+ No grid mismatch found!
+ Subroutine nxtcel completed normally
+ iteration  1
+ iteration   1  corrections   292
+ iteration  2
+ iteration   2  corrections   359
+ iteration  3
+ iteration   3  corrections   267
+ iteration  4
+ iteration   4  corrections   196
+ iteration  5
+ iteration   5  corrections   177
+ iteration  6
+ iteration   6  corrections   145
+ iteration  7
+ iteration   7  corrections   129
+ iteration  8
+ iteration   8  corrections   98
+ iteration  9
+ iteration   9  corrections   86
+ iteration  10
+ iteration   10  corrections   73
+ iteration  11
+ iteration   11  corrections   88
+ iteration  12
+ iteration   12  corrections   46
+ iteration  13
+ iteration   13  corrections   67
+ iteration  14
+ iteration   14  corrections   51
+ iteration  15
+ iteration   15  corrections   39
+ iteration  16
+ iteration   16  corrections   39
+ iteration  17
+ iteration   17  corrections   32
+ iteration  18
+ iteration   18  corrections   43
+ iteration  19
+ iteration   19  corrections   37
+ iteration  20
+ iteration   20  corrections   32
+ iteration  21
+ iteration   21  corrections   26
+ iteration  22
+ iteration   22  corrections   32
+ iteration  23
+ iteration   23  corrections   24
+ iteration  24
+ iteration   24  corrections   23
+ iteration  25
+ iteration   25  corrections   19
+ iteration  26
+ iteration   26  corrections   18
+ iteration  27
+ iteration   27  corrections   22
+ iteration  28
+ iteration   28  corrections   17
+ iteration  29
+ iteration   29  corrections   17
+ iteration  30
+ iteration   30  corrections   11
+ iteration  31
+ iteration   31  corrections   4
+ iteration  32
+ iteration   32  corrections   0
+ Parameters for file--> data\tutorial\dem.asc                                                                                                                                                                                                                                          
+ Exponent  -1.00000
+ Data cells, Rows, Columns, Downslope cells
+   706565  1553  879  1305307
+ 
+ TopoIndex finished normally
+ Date: 12/07/2024
+ Time: 16:56:27
