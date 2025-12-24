@@ -2,18 +2,24 @@ package com.xyz.controller;
 
 import lombok.Data;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.ResponseEntity;
+
 
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.*;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.List;
@@ -27,8 +33,20 @@ import java.util.Set;
 import java.util.HashSet;
 
 import org.geotools.referencing.CRS;
+import org.geotools.data.FileDataStore;
+import org.geotools.data.FileDataStoreFinder;
+import org.geotools.data.shapefile.ShapefileDataStore;
+import org.geotools.data.simple.SimpleFeatureSource;
+import org.geotools.data.simple.SimpleFeatureCollection;
+import org.geotools.data.simple.SimpleFeatureIterator;
+import org.geotools.data.store.ReprojectingFeatureCollection;
+import org.geotools.feature.DefaultFeatureCollection;
+import org.geotools.feature.simple.SimpleFeatureBuilder;
+import org.geotools.geojson.feature.FeatureJSON;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.operation.MathTransform;
+import org.opengis.feature.simple.SimpleFeature;
+import org.opengis.feature.simple.SimpleFeatureType;
 
 @RestController
 @RequestMapping("/admin/user")
@@ -210,10 +228,12 @@ public class AdminUserController {
         backupFile(ORIG_FILE_PATH, BACKUP_FILE_PATH);
 
         // 设置tr_in.txt 文件路径
-        String filePath = "D:/code/c/demo1/tr_in.txt";
+//        String filePath = "D:/code/c/demo1/tr_in.txt";
+        String filePath = "./tr_in.txt";
+
 
         //读取栅格图的行列号
-        String filePath3 = "D:/code/c/demo1/data/tutorial/dem.asc";
+        String filePath3 = "./data/tutorial/dem.asc";
         BufferedReader reader3 = new BufferedReader(new FileReader(filePath3));
         String line_1 = reader3.readLine(); // 读取第一行数据
         String line_2 = reader3.readLine(); // 读取第二行数据
@@ -227,7 +247,7 @@ public class AdminUserController {
         System.out.println("第二行数据中的数字部分: " + nrows);*/
 
         //读取像元个数
-        String filePath4 = "D:/code/c/demo1/data/tutorial/TIcelindxList_tutorial.txt";
+        String filePath4 = "./data/tutorial/TIcelindxList_tutorial.txt";
         BufferedReader reader4 = new BufferedReader(new FileReader(filePath4));
         int lineCount = 0;
         while (reader4.readLine() != null) {
@@ -238,7 +258,7 @@ public class AdminUserController {
         //System.out.println("像元个数: " + lineCountStr);
 
         //读取nwf（影响像元个数）
-        String filePath5 = "D:/code/c/demo1/data/tutorial/TIwfactorList_tutorial.txt";
+        String filePath5 = "./data/tutorial/TIwfactorList_tutorial.txt";
         BufferedReader reader5 = new BufferedReader(new FileReader(filePath5));
         int lineCount1 = 0;
         while (reader5.readLine() != null) {
@@ -301,7 +321,7 @@ public class AdminUserController {
 
         CompletableFuture<Void> processFuture = CompletableFuture.runAsync(() -> {
             try {
-                ProcessBuilder builder = new ProcessBuilder("cmd", "/c", "start", "D:/code/c/demo1/TRIGRS.exe");//cmd启动新线程执行TRIGRS
+                ProcessBuilder builder = new ProcessBuilder("cmd", "/c", "start", "./TRIGRS.exe");//cmd启动新线程执行TRIGRS
                  builder.start();//启动cmd，进而启动TRIGRS.exe
                 ProcessBuilder builder1 = new ProcessBuilder("cmd", "/c","tasklist", "/FI", "IMAGENAME eq TRIGRS.exe");
 //                ProcessBuilder builder1 = new ProcessBuilder("cmd", "/c","tasklist");
@@ -413,8 +433,8 @@ public class AdminUserController {
             e.printStackTrace();
         }
     }
-    private static final String ORIG_FILE_PATH = "D:/code/c/demo1/tr_in.txt";
-    private static final String BACKUP_FILE_PATH = "D:/code/c/demo1/tr_in_b.txt";
+    private static final String ORIG_FILE_PATH = "./tr_in.txt";
+    private static final String BACKUP_FILE_PATH = "./tr_in_b.txt";
     //备份文件
     public static void backupFile(String origFilePath, String backupFilePath) throws IOException {
         Path origPath = Paths.get(origFilePath);
@@ -425,13 +445,32 @@ public class AdminUserController {
     public static void restoreFile(String origFilePath, String backupFilePath) throws IOException {
         Path origPath = Paths.get(origFilePath);
         Path backupPath = Paths.get(backupFilePath);
-        Files.copy(backupPath, origPath, StandardCopyOption.REPLACE_EXISTING);
+
+        // 如果目标文件被占用，尝试先删除再复制
+        try {
+            // 强制删除旧文件（如果存在）
+            if (Files.exists(origPath)) {
+                try {
+                    Files.delete(origPath);
+                } catch (IOException e) {
+                    System.err.println("文件删除失败（可能被占用）: " + origPath);
+                }
+            }
+
+            // 再复制新文件
+            try (InputStream in = Files.newInputStream(backupPath)) {
+                Files.copy(in, origPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+        } catch (IOException e) {
+            throw new IOException("文件恢复失败，可能被占用: " + origPath.toAbsolutePath(), e);
+        }
     }
 
     //风险txt文件转为png
     public static String GrayscaleImageGenerator(String color,String time) throws Exception {
         System.out.println("开始生成图-----");
-        String File = "D:/code/c/demo1/data/result/TRfs_min_tutorial_1.txt"; // 输入文件路径
+        String File = "./data/result/TRfs_min_tutorial_1.txt"; // 输入文件路径
         // 自动创建唯一的临时文件，前缀为 "temp_"，后缀为 ".txt"
         Path inputFile = Files.createTempFile("temp_", ".txt");
         // 拷贝原文件到临时文件
@@ -517,7 +556,7 @@ public class AdminUserController {
             }else{
                 uniqueFileName= "redGradient_" + timestamp + ".png";
             }
-            ImageIO.write(image, "png", new java.io.File("D:\\practice\\nginx-1.24.0\\html\\"+uniqueFileName));
+            ImageIO.write(image, "png", new java.io.File("E:\\softwares\\nginx-1.26.2\\nginx-1.26.2\\html\\"+uniqueFileName));
             // 删除临时文件
             Files.deleteIfExists(inputFile);
 //            System.out.println("临时文件已销毁。");
@@ -581,6 +620,244 @@ public class AdminUserController {
                 return new Color(grayValue, grayValue, grayValue, 255);
         }
     }
+//    @PostMapping("/GBM")
+//    public ResponseEntity<?> processShp(@RequestBody Map<String, String> body) {
+//        String filename = body.get("filename");
+//        String folder = body.get("folder");
+//
+//        if (filename == null || folder == null) {
+//            return ResponseEntity.badRequest().body("Missing 'filename' or 'folder'");
+//        }
+//
+//        // ✅ 拼接 shapefile 路径（也可以直接用 body 中的路径）
+//        Path shpPath = Paths.get(folder, filename);
+//        Path shpPathTest = Paths.get("data/BCNSL/output/filtered_shapefile.shp");
+//        File shpFile = shpPathTest.toFile();
+//        if (!Files.exists(shpPath)) {
+//            return ResponseEntity.badRequest().body("Shapefile not found: " + shpPath.toAbsolutePath());
+//        }
+//
+//        try {
+//            System.setProperty("org.geotools.shapefile.charset", "GBK");
+//
+//
+//
+//            // 1️⃣ 打开 Shapefile 数据源
+//            ShapefileDataStore store = new ShapefileDataStore(shpFile.toURI().toURL());
+//            store.setCharset(Charset.forName("GBK")); // ANSI在中文系统就是GBK
+//            SimpleFeatureSource featureSource = store.getFeatureSource();
+//            SimpleFeatureCollection collection = featureSource.getFeatures();
+//
+//            // 2️⃣ 获取源坐标系，并创建目标坐标系 EPSG:4326
+//            CoordinateReferenceSystem sourceCRS = featureSource.getSchema().getCoordinateReferenceSystem();
+//            CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
+//
+//            // ⚠️ 如果坐标系不同，则投影转换
+//            if (sourceCRS != null && !CRS.equalsIgnoreMetadata(sourceCRS, targetCRS)) {
+//                System.out.println("Reprojecting shapefile from " + sourceCRS.getName() + " → EPSG:4326 ...");
+//                collection = new ReprojectingFeatureCollection(collection, targetCRS);
+//            } else {
+//                System.out.println("Shapefile already in EPSG:4326 or CRS undefined.");
+//            }
+//
+//            // 3️⃣ 保留字段
+//            List<String> keepFields = Arrays.asList("Id", "风险", "geometry");
+//            DefaultFeatureCollection filteredCollection = new DefaultFeatureCollection();
+//
+//            try (SimpleFeatureIterator iterator = collection.features()) {
+//                while (iterator.hasNext()) {
+//                    SimpleFeature feature = iterator.next();
+//
+//                    Object idValue = feature.getAttribute("Id");
+//                    Object suscValue = feature.getAttribute("风险");
+//                    Object geometry = feature.getDefaultGeometry();
+//
+//                    SimpleFeatureType featureType = feature.getFeatureType();
+//                    SimpleFeatureBuilder builder = new SimpleFeatureBuilder(featureType);
+//
+//                    for (String field : featureType.getAttributeDescriptors()
+//                            .stream().map(d -> d.getLocalName()).toList()) {
+//                        if (field.equals(featureType.getGeometryDescriptor().getLocalName())) {
+//                            builder.add(geometry);
+//                        } else if (field.equals("Id")) {
+//                            builder.add(idValue);
+//                        } else if (field.equals("风险")) {
+//                            builder.add(suscValue);
+//                        } else {
+//                            builder.add(null);
+//                        }
+//                    }
+//
+//                    filteredCollection.add(builder.buildFeature(null));
+//                }
+//            }
+//
+//            // 4️⃣ 转换为 GeoJSON
+//            FeatureJSON fjson = new FeatureJSON();
+//            ByteArrayOutputStream os = new ByteArrayOutputStream();
+//            fjson.writeFeatureCollection(filteredCollection, os);
+//            String geojson = os.toString();
+//
+//            // 5️⃣ 将 GeoJSON 保存到本地
+//            Path outputDir = Paths.get("data/output");
+//            if (!Files.exists(outputDir)) {
+//                Files.createDirectories(outputDir);
+//            }
+//
+//            // 输出文件路径：例如 data/output/filtered_shapefile.geojson
+//            String outputFileName = filename.replace(".shp", "_reprojected.geojson");
+//            Path outputPath = outputDir.resolve(outputFileName);
+//
+//            try (FileWriter writer = new FileWriter(outputPath.toFile())) {
+//                writer.write(geojson);
+//            }
+//
+//            System.out.println("✅ GeoJSON 已保存到：" + outputPath.toAbsolutePath());
+//
+//            // 5️⃣ 返回结果
+//            Map<String, Object> resp = new HashMap<>();
+//            resp.put("status", "ok");
+//            resp.put("layerId", "shp-" + System.currentTimeMillis());
+//            resp.put("geojson", geojson);
+//
+//            return ResponseEntity.ok(resp);
+//
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//            return ResponseEntity.internalServerError().body("Error processing shapefile: " + e.getMessage());
+//        }
+//    }
+    @PostMapping("/GBM")
+    public ResponseEntity<?> runInference(@RequestBody Map<String, Object> body) {
+        try {
+            //  获取文件数组
+            List<Map<String, Object>> files = (List<Map<String, Object>>) body.get("files");
+            if (files == null || files.isEmpty()) {
+                return ResponseEntity.badRequest().body("Missing 'files'");
+            }
 
+            //  从第一条文件获取所在目录（假设同一 shapefile 各部件都在同一目录）
+            String firstPath = (String) files.get(0).get("savedPath");
+            if (firstPath == null) {
+                return ResponseEntity.badRequest().body("Invalid file path");
+            }
+
+            File firstFile = new File(firstPath);
+            String folder = firstFile.getParent();
+            System.out.println("[INFO] Using folder: " + folder);
+
+            //  调用 Python 脚本
+            String pythonExe = "D:\\application\\miniconda3\\envs\\GlaSys\\python.exe";
+            String pythonScript = "E:\\Projects\\ZHLXT\\算法\\冰川型灾害链判识\\platform\\src\\inference.py";
+
+            ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, folder);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+            String line;
+            String outputShpPath = null;
+            while ((line = reader.readLine()) != null) {
+                System.out.println("[Python] " + line);
+                if (line.startsWith("OUTPUT_PATH=")) {
+                    outputShpPath = line.substring("OUTPUT_PATH=".length()).trim();
+                }
+            }
+
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                return ResponseEntity.internalServerError().body("Python script failed");
+            }
+
+            if (outputShpPath == null) {
+                return ResponseEntity.internalServerError().body("No output shapefile path from Python");
+            }
+
+            //  Shapefile → GeoJSON
+            System.setProperty("org.geotools.shapefile.charset", "GBK");
+            File shpFile = new File(outputShpPath);
+            ShapefileDataStore store = new ShapefileDataStore(shpFile.toURI().toURL());
+            store.setCharset(Charset.forName("GBK"));
+            SimpleFeatureSource featureSource = store.getFeatureSource();
+            SimpleFeatureCollection collection = featureSource.getFeatures();
+
+            CoordinateReferenceSystem sourceCRS = featureSource.getSchema().getCoordinateReferenceSystem();
+            CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
+            if (sourceCRS != null && !CRS.equalsIgnoreMetadata(sourceCRS, targetCRS)) {
+                collection = new ReprojectingFeatureCollection(collection, targetCRS);
+            }
+
+            FeatureJSON fjson = new FeatureJSON();
+            ByteArrayOutputStream os = new ByteArrayOutputStream();
+            fjson.writeFeatureCollection(collection, os);
+            String geojson = os.toString();
+
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("status", "ok");
+            resp.put("geojson", geojson);
+            resp.put("folder", folder);
+            return ResponseEntity.ok(resp);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
     }
+
+    @PostMapping("/seismic")
+    public ResponseEntity<?> processSeismic(@RequestBody Map<String, Object> body) {
+        try {
+            // 获取文件路径（从前端传递）
+            @SuppressWarnings("unchecked")
+            Map<String, String> fileInfo = (Map<String, String>) body.get("file");
+            if (fileInfo == null || fileInfo.get("savedPath") == null) {
+                return ResponseEntity.badRequest().body("Missing 'file.savedPath'");
+            }
+
+            String excelPath = fileInfo.get("savedPath");
+            File excelFile = new File(excelPath);
+            if (!excelFile.exists()) {
+                return ResponseEntity.badRequest().body("Excel file not found: " + excelPath);
+            }
+
+            // 调用Python脚本
+            String pythonExe = "D:\\application\\miniconda3\\envs\\test\\python.exe";  // 调整为您的Python环境
+            String pythonScript = "E:\\Projects\\ZHLXT\\算法\\宋元伟\\seismic.py";  // 修改后的Python文件路径
+            ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, excelPath);  // 传递文件路径作为参数
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+            String line;
+            String outputJson = "";
+            while ((line = reader.readLine()) != null) {
+                System.out.println("[Python] " + line);
+                if (line.startsWith("RESULT_JSON=")) {
+                    outputJson = line.substring("RESULT_JSON=".length()).trim();
+                }
+            }
+
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                return ResponseEntity.internalServerError().body("Python script failed");
+            }
+
+            if (outputJson.isEmpty()) {
+                return ResponseEntity.internalServerError().body("No result from Python");
+            }
+
+            // 解析JSON（简单手动解析，或用Jackson）
+            boolean detected = outputJson.contains("\"detected\": true");
+
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("detected", detected);
+            return ResponseEntity.ok(resp);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+}
+
 

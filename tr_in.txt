@@ -1,14 +1,14 @@
 Name of project (up to 255 characters)
 TRIGRS, version 2, Tutorial
 imax, row, col, nwf, tx, nmaxx
-xygs,  h,  l,  yxxygs,  1,  100000
+706565,  1553,  879,  1305307,  1,  100000
 nzs, mmax, nper,  zmin,  uww,     t, zones
-10,    100,   6,   0.001,  9.8e3,  time,  1
+10,    100,   6,   0.001,  9.8e3,  10800,  1
 zmax,   depth,   rizero,  Min_Slope_Angle (degrees)
-zm,  de,  rsl,       0.
+2.4,  3.0,  1.0e-6,       0.
 zone, 1
 cohesion,phi,  uws,   diffus,   K-sat, Theta-sat,Theta-res,Alpha
-3.5e+03, 35., 2.2e+04,  di, ks,   0.45,    0.05,    -0.5
+3.5e+03, 35., 2.2e+04,  1.32e-03, 1.32e-05,   0.45,    0.05,    -0.5
 cri(1), cri(2),cri(3), ..., cri(nper)
 3.e-6,  5.e-7,4.e-7,3.e-7,2.e-7,1.e-7,
 capt(1), capt(2),capt(3), ..., capt(n), capt(n+1)
