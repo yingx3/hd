@@ -1,5 +1,6 @@
 package com.xyz.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
@@ -627,6 +628,15 @@ public class AdminUserController {
         try {
             //  获取文件数组
             List<Map<String, Object>> files = (List<Map<String, Object>>) body.get("files");
+            // 1. 取出 form（注意：它是 Map，不是 List！）
+            Map<String, Object> form = (Map<String, Object>) body.get("form");
+
+// 2. 把 Map 转成 JSON 字符串（关键步骤！）
+            ObjectMapper objectMapper = new ObjectMapper();
+            String jsonStr = objectMapper.writeValueAsString(form);
+
+            System.out.print(jsonStr);
+//            {files=[{originalFileName=waternet_new1.prj, savedPath=..\..\src\assets\input\waternet_new1.prj}], form={aspect=150, curvature=0.002, fault_distance=30000, ndvi=0.001, rainfall=700, relief_amplitude=250}}
             if (files == null || files.isEmpty()) {
                 return ResponseEntity.badRequest().body("Missing 'files'");
             }
@@ -639,19 +649,24 @@ public class AdminUserController {
 
             File firstFile = new File(firstPath);
             String folder = firstFile.getParent();
+            String shpfile = firstFile.getName();
+
+            System.out.println(firstPath);
 
             //  调用 Python 脚本
-            String pythonDir = "./scripts/python";
-            // 生成 干净的、解析好的绝对路径（没有 ..）
-            File file = new File(pythonDir).getCanonicalFile();
-            String realPath = file.getAbsolutePath();
-            // 打印最终真实路径
-            System.out.println("✅ 解析后真实路径：" + realPath);
+//            String pythonDir = "./scripts/python";
+//            // 生成 干净的、解析好的绝对路径（没有 ..）
+//            File file = new File(pythonDir).getCanonicalFile();
+//            String realPath = file.getAbsolutePath();
+//            // 打印最终真实路径
+//            System.out.println("✅ 解析后真实路径：" + realPath);
             String pythonExe = "./scripts/python/python.exe";
             String pythonScript = "../demo/src/assets/src/inference.py";
 
-            ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, folder);
+            ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, shpfile, jsonStr);
+            //将错误信息和正常输出信息合并到一起
             pb.redirectErrorStream(true);
+
             Process process = pb.start();
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
