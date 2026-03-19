@@ -48,6 +48,8 @@ import org.opengis.referencing.operation.MathTransform;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
 
+import static jdk.jfr.internal.SecuritySupport.getAbsolutePath;
+
 @RestController
 @RequestMapping("/admin/user")
 public class AdminUserController {
@@ -620,113 +622,6 @@ public class AdminUserController {
                 return new Color(grayValue, grayValue, grayValue, 255);
         }
     }
-//    @PostMapping("/GBM")
-//    public ResponseEntity<?> processShp(@RequestBody Map<String, String> body) {
-//        String filename = body.get("filename");
-//        String folder = body.get("folder");
-//
-//        if (filename == null || folder == null) {
-//            return ResponseEntity.badRequest().body("Missing 'filename' or 'folder'");
-//        }
-//
-//        // ✅ 拼接 shapefile 路径（也可以直接用 body 中的路径）
-//        Path shpPath = Paths.get(folder, filename);
-//        Path shpPathTest = Paths.get("data/BCNSL/output/filtered_shapefile.shp");
-//        File shpFile = shpPathTest.toFile();
-//        if (!Files.exists(shpPath)) {
-//            return ResponseEntity.badRequest().body("Shapefile not found: " + shpPath.toAbsolutePath());
-//        }
-//
-//        try {
-//            System.setProperty("org.geotools.shapefile.charset", "GBK");
-//
-//
-//
-//            // 1️⃣ 打开 Shapefile 数据源
-//            ShapefileDataStore store = new ShapefileDataStore(shpFile.toURI().toURL());
-//            store.setCharset(Charset.forName("GBK")); // ANSI在中文系统就是GBK
-//            SimpleFeatureSource featureSource = store.getFeatureSource();
-//            SimpleFeatureCollection collection = featureSource.getFeatures();
-//
-//            // 2️⃣ 获取源坐标系，并创建目标坐标系 EPSG:4326
-//            CoordinateReferenceSystem sourceCRS = featureSource.getSchema().getCoordinateReferenceSystem();
-//            CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
-//
-//            // ⚠️ 如果坐标系不同，则投影转换
-//            if (sourceCRS != null && !CRS.equalsIgnoreMetadata(sourceCRS, targetCRS)) {
-//                System.out.println("Reprojecting shapefile from " + sourceCRS.getName() + " → EPSG:4326 ...");
-//                collection = new ReprojectingFeatureCollection(collection, targetCRS);
-//            } else {
-//                System.out.println("Shapefile already in EPSG:4326 or CRS undefined.");
-//            }
-//
-//            // 3️⃣ 保留字段
-//            List<String> keepFields = Arrays.asList("Id", "风险", "geometry");
-//            DefaultFeatureCollection filteredCollection = new DefaultFeatureCollection();
-//
-//            try (SimpleFeatureIterator iterator = collection.features()) {
-//                while (iterator.hasNext()) {
-//                    SimpleFeature feature = iterator.next();
-//
-//                    Object idValue = feature.getAttribute("Id");
-//                    Object suscValue = feature.getAttribute("风险");
-//                    Object geometry = feature.getDefaultGeometry();
-//
-//                    SimpleFeatureType featureType = feature.getFeatureType();
-//                    SimpleFeatureBuilder builder = new SimpleFeatureBuilder(featureType);
-//
-//                    for (String field : featureType.getAttributeDescriptors()
-//                            .stream().map(d -> d.getLocalName()).toList()) {
-//                        if (field.equals(featureType.getGeometryDescriptor().getLocalName())) {
-//                            builder.add(geometry);
-//                        } else if (field.equals("Id")) {
-//                            builder.add(idValue);
-//                        } else if (field.equals("风险")) {
-//                            builder.add(suscValue);
-//                        } else {
-//                            builder.add(null);
-//                        }
-//                    }
-//
-//                    filteredCollection.add(builder.buildFeature(null));
-//                }
-//            }
-//
-//            // 4️⃣ 转换为 GeoJSON
-//            FeatureJSON fjson = new FeatureJSON();
-//            ByteArrayOutputStream os = new ByteArrayOutputStream();
-//            fjson.writeFeatureCollection(filteredCollection, os);
-//            String geojson = os.toString();
-//
-//            // 5️⃣ 将 GeoJSON 保存到本地
-//            Path outputDir = Paths.get("data/output");
-//            if (!Files.exists(outputDir)) {
-//                Files.createDirectories(outputDir);
-//            }
-//
-//            // 输出文件路径：例如 data/output/filtered_shapefile.geojson
-//            String outputFileName = filename.replace(".shp", "_reprojected.geojson");
-//            Path outputPath = outputDir.resolve(outputFileName);
-//
-//            try (FileWriter writer = new FileWriter(outputPath.toFile())) {
-//                writer.write(geojson);
-//            }
-//
-//            System.out.println("✅ GeoJSON 已保存到：" + outputPath.toAbsolutePath());
-//
-//            // 5️⃣ 返回结果
-//            Map<String, Object> resp = new HashMap<>();
-//            resp.put("status", "ok");
-//            resp.put("layerId", "shp-" + System.currentTimeMillis());
-//            resp.put("geojson", geojson);
-//
-//            return ResponseEntity.ok(resp);
-//
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//            return ResponseEntity.internalServerError().body("Error processing shapefile: " + e.getMessage());
-//        }
-//    }
     @PostMapping("/GBM")
     public ResponseEntity<?> runInference(@RequestBody Map<String, Object> body) {
         try {
@@ -744,17 +639,23 @@ public class AdminUserController {
 
             File firstFile = new File(firstPath);
             String folder = firstFile.getParent();
-            System.out.println("[INFO] Using folder: " + folder);
 
             //  调用 Python 脚本
-            String pythonExe = "D:\\application\\miniconda3\\envs\\GlaSys\\python.exe";
-            String pythonScript = "E:\\Projects\\ZHLXT\\算法\\冰川型灾害链判识\\platform\\src\\inference.py";
+            String pythonDir = "./scripts/python";
+            // 生成 干净的、解析好的绝对路径（没有 ..）
+            File file = new File(pythonDir).getCanonicalFile();
+            String realPath = file.getAbsolutePath();
+            // 打印最终真实路径
+            System.out.println("✅ 解析后真实路径：" + realPath);
+            String pythonExe = "./scripts/python/python.exe";
+            String pythonScript = "../demo/src/assets/src/inference.py";
 
             ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, folder);
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+//            System.out.print(reader);
             String line;
             String outputShpPath = null;
             while ((line = reader.readLine()) != null) {
@@ -796,6 +697,7 @@ public class AdminUserController {
             resp.put("status", "ok");
             resp.put("geojson", geojson);
             resp.put("folder", folder);
+//            System.out.print(resp);
             return ResponseEntity.ok(resp);
 
         } catch (Exception e) {
@@ -821,8 +723,9 @@ public class AdminUserController {
             }
 
             // 调用Python脚本
-            String pythonExe = "D:\\application\\miniconda3\\envs\\test\\python.exe";  // 调整为您的Python环境
-            String pythonScript = "E:\\Projects\\ZHLXT\\算法\\宋元伟\\seismic.py";  // 修改后的Python文件路径
+//            String pythonExe = "D:\\application\\miniconda3\\envs\\test\\python.exe";  // 调整为您的Python环境
+            String pythonExe = "C:\\Users\\32838\\.conda\\envs\\anuga_env\\python.exe";  // 调整为您的Python环境
+            String pythonScript = "D:\\practice\\seismic.py";  // 修改后的Python文件路径
             ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, excelPath);  // 传递文件路径作为参数
             pb.redirectErrorStream(true);
             Process process = pb.start();

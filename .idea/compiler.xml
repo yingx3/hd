@@ -9,11 +9,13 @@
         <outputRelativeToContentRoot value="true" />
         <module name="riskevaluation" />
         <module name="demo1" />
+        <module name="backend" />
       </profile>
     </annotationProcessing>
   </component>
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="backend" options="-parameters --add-exports jdk.jfr/jdk.jfr.internal=ALL-UNNAMED" />
       <module name="demo1" options="-parameters" />
       <module name="riskevaluation" options="-parameters" />
     </option>
