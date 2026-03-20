@@ -1,0 +1,73 @@
+Name of project (up to 255 characters)
+TRIGRS, version 2, Tutorial
+imax, row, col, nwf, tx, nmaxx
+1483655,  1589,  2945,  2303912,  1,  100000
+nzs, mmax, nper,  zmin,  uww,     t, zones
+10,    100,   2,   0.001,  9.8e3,  100800,  1
+zmax,   depth,   rizero,  Min_Slope_Angle (degrees)
+3.001,  2.4,  1,       0.
+zone, 1
+cohesion,phi,  uws,   diffus,   K-sat, Theta-sat,Theta-res,Alpha
+3.5e+03, 35., 2.2e+04,  6.0e-06, 1.0e-07,   0.45,    0.05,    -0.5
+cri(1), cri(2), ..., cri(nper)
+3.e-7,  9.e-5
+capt(1), capt(2), ..., capt(n), capt(n+1)
+0,       172800, 216000
+File name of slope angle grid (slofil)
+Data\tutorial\slope.asc
+File name of property zone grid (zonfil)
+Data\tutorial\zones.asc
+File name of depth grid (zfil)
+none
+File name of initial depth of water table grid   (depfil)
+none
+File name of initial infiltration rate grid   (rizerofil)
+none
+List of file name(s) of rainfall intensity for each period, (rifil())
+Data\tutorial\ri1.asc
+Data\tutorial\ri2.asc
+File name of grid of D8 runoff receptor cell numbers (nxtfil)
+Data\tutorial\TIdscelGrid_tutorial.asc
+File name of list of defining runoff computation order (ndxfil)
+Data\tutorial\TIcelindxList_tutorial.txt
+File name of list of all runoff receptor cells  (dscfil)
+Data\tutorial\TIdscelList_tutorial.txt
+File name of list of runoff weighting factors  (wffil)
+Data\tutorial\TIwfactorList_tutorial.txt
+Folder where output grid files will be stored  (folder)
+Data\result\
+Identification code to be added to names of output files (suffix)
+tutorial
+Save grid files of runoff? Enter T (.true.) or F (.false.)
+F
+Save grid of minimum factor of safety? Enter Enter T (.true.) or F (.false.)
+T
+Save grid of depth of minimum factor of safety? Enter Enter T (.true.) or F (.false.)
+T
+Save grid of pore pressure at depth of minimum factor of safety? Enter Enter T (.true.) or F (.false.)
+T
+Save grid files of actual infiltration rate? Enter T (.true.) or F (.false.)
+F
+Save grid files of unsaturated zone basal flux? Enter T (.true.) or F (.false.)
+F
+Save listing of pressure head and factor of safety ("flag")? (Enter -2 detailed, -1 normal, 0 none)
+-2
+Number of times to save output grids
+1
+Times of output grids
+216000.
+Skip other timesteps? Enter T (.true.) or F (.false.)
+F
+Use analytic solution for fillable porosity?  Enter T (.true.) or F (.false.)
+T
+Estimate positive pressure head in rising water table zone (i.e. in lower part of unsat zone)?  Enter T (.true.) or F (.false.)
+T
+Use psi0=-1/alpha? Enter T (.true.) or F (.false.) (False selects the default value, psi0=0)
+F
+Log mass balance results?   Enter T (.true.) or F (.false.)
+T
+Flow direction (enter "gener", "slope", or "hydro")
+gener
+Add steady background flux to transient infiltration rate to prevent drying beyond the initial conditions during periods of zero infiltration?
+T
+
