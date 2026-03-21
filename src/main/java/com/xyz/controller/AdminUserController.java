@@ -737,11 +737,33 @@ public class AdminUserController {
                 return ResponseEntity.badRequest().body("Excel file not found: " + excelPath);
             }
 
+            // 获取参数（从前端传递）
+            @SuppressWarnings("unchecked")
+            Map<String, Object> params = (Map<String, Object>) body.get("params");
+            if (params == null) {
+                params = new HashMap<>();
+            }
+
+            // 提取参数值，设置默认值
+            double threshold = params.containsKey("threshold") ? Double.parseDouble(params.get("threshold").toString()) : 2.5;
+            int short_window = params.containsKey("short_window") ? Integer.parseInt(params.get("short_window").toString()) : 30;
+            int long_window = params.containsKey("long_window") ? Integer.parseInt(params.get("long_window").toString()) : 240;
+            int segment_duration = params.containsKey("segment_duration") ? Integer.parseInt(params.get("segment_duration").toString()) : 10;
+            int total_duration = params.containsKey("total_duration") ? Integer.parseInt(params.get("total_duration").toString()) : 60;
+            int sampling_rate = params.containsKey("sampling_rate") ? Integer.parseInt(params.get("sampling_rate").toString()) : 100;
+
             // 调用Python脚本
-//            String pythonExe = "D:\\application\\miniconda3\\envs\\test\\python.exe";  // 调整为您的Python环境
-            String pythonExe = "C:\\Users\\32838\\.conda\\envs\\anuga_env\\python.exe";  // 调整为您的Python环境
-            String pythonScript = "D:\\practice\\seismic.py";  // 修改后的Python文件路径
-            ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, excelPath);  // 传递文件路径作为参数
+            String pythonExe = "D:\\application\\miniconda3\\envs\\test\\python.exe";  // 调整为您的Python环境
+            String pythonScript = "suanfa\\seismic\\seismic.py";  // 修改后的Python文件路径
+            ProcessBuilder pb = new ProcessBuilder(
+                    pythonExe, pythonScript, excelPath,
+                    String.valueOf(threshold),
+                    String.valueOf(short_window),
+                    String.valueOf(long_window),
+                    String.valueOf(segment_duration),
+                    String.valueOf(total_duration),
+                    String.valueOf(sampling_rate)
+            );  // 传递文件路径和参数作为参数
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
@@ -776,6 +798,7 @@ public class AdminUserController {
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
     }
+
 }
 
 
