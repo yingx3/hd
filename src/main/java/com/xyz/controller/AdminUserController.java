@@ -49,7 +49,7 @@ import org.opengis.referencing.operation.MathTransform;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
 
-import static jdk.jfr.internal.SecuritySupport.getAbsolutePath;
+//import static jdk.jfr.internal.SecuritySupport.getAbsolutePath;
 
 @RestController
 @RequestMapping("/admin/user")
@@ -730,7 +730,7 @@ public class AdminUserController {
             if (fileInfo == null || fileInfo.get("savedPath") == null) {
                 return ResponseEntity.badRequest().body("Missing 'file.savedPath'");
             }
-
+//System.out.println(fileInfo);
             String excelPath = fileInfo.get("savedPath");
             File excelFile = new File(excelPath);
             if (!excelFile.exists()) {
@@ -753,7 +753,7 @@ public class AdminUserController {
             int sampling_rate = params.containsKey("sampling_rate") ? Integer.parseInt(params.get("sampling_rate").toString()) : 100;
 
             // 调用Python脚本
-            String pythonExe = "D:\\application\\miniconda3\\envs\\test\\python.exe";  // 调整为您的Python环境
+            String pythonExe =  "./scripts/python/python.exe";  // 调整为您的Python环境
             String pythonScript = "suanfa\\seismic\\seismic.py";  // 修改后的Python文件路径
             ProcessBuilder pb = new ProcessBuilder(
                     pythonExe, pythonScript, excelPath,
