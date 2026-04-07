@@ -770,13 +770,16 @@ public class AdminUserController {
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
             String line;
             String outputJson = "";
+            String echarts_data ="";
             while ((line = reader.readLine()) != null) {
                 System.out.println("[Python] " + line);
                 if (line.startsWith("RESULT_JSON=")) {
                     outputJson = line.substring("RESULT_JSON=".length()).trim();
                 }
+                if(line.startsWith("echarts=")){
+                    echarts_data=line.substring("echarts=".length()).trim();
+                }
             }
-
             int exitCode = process.waitFor();
             if (exitCode != 0) {
                 return ResponseEntity.internalServerError().body("Python script failed");
@@ -787,10 +790,12 @@ public class AdminUserController {
             }
 
             // 解析JSON（简单手动解析，或用Jackson）
-            boolean detected = outputJson.contains("\"detected\": true");
+                boolean detected = outputJson.contains("\"detected\": true");
+
 
             Map<String, Object> resp = new HashMap<>();
             resp.put("detected", detected);
+            resp.put("echarts_data",echarts_data);
             return ResponseEntity.ok(resp);
 
         } catch (Exception e) {

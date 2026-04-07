@@ -22,17 +22,17 @@ def calculate_debris_flow(data, threshold, short_window, long_window, segment_du
     lta = np.pad(lta, (long_window_samples - 1, 0), mode='constant', constant_values=0)
 
     result = np.zeros_like(data)
-
+    ratio = np.zeros_like(data)  # 正确方式
     for i in range(len(data)):
         # Skip if STA/LTA cannot be computed
         if i < long_window_samples or lta[i] == 0:
             continue
 
         # Compute the STA/LTA ratio
-        ratio = sta[i] / lta[i]
+        ratio[i] = sta[i] / lta[i]
 
         # Check if the ratio exceeds the threshold
-        if ratio > threshold:
+        if ratio[i] > threshold:
             long_window_value = lta[i]
             segment_ratios = []
 
@@ -50,7 +50,7 @@ def calculate_debris_flow(data, threshold, short_window, long_window, segment_du
     # Check if any element in result is 1
     detected = np.any(result == 1)
 
-    return result, detected
+    return data,sta,lta,ratio,result, detected
 
 # 主程序
 if __name__ == "__main__":
@@ -59,7 +59,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     filepath = sys.argv[1]
-    print(f"读取文件：{filepath}")
+    print(f"file_path:{filepath}")
 
     # 解析命令行参数，设置默认值
     threshold = 2.5
@@ -82,23 +82,32 @@ if __name__ == "__main__":
     if len(sys.argv) >= 8:
         sampling_rate = int(sys.argv[7])
 
-    print(f"参数设置：threshold={threshold}, short_window={short_window}, long_window={long_window}, segment_duration={segment_duration}, total_duration={total_duration}, sampling_rate={sampling_rate}")
+    print(f"params:threshold={threshold}, short_window={short_window}, long_window={long_window}, segment_duration={segment_duration}, total_duration={total_duration}, sampling_rate={sampling_rate}")
 
     try:
         df = pd.read_excel(filepath, skiprows=1)
-        print(f"CSV 列名：{df.columns.tolist()}")
+        print(f"CSV_column_name:{df.columns.tolist()}")
 
         data_column = df.iloc[:, 0]  # 假设第一列是信号数据
         data_array = data_column.values.astype(float)
-        print(f"读取数据长度：{len(data_array)} 点")
+        print(f"data_length:{len(data_array)} ")
 
-        result_array, detected = calculate_debris_flow(
+        data,sta,lta,ratio,result_array, detected = calculate_debris_flow(
             data_array, threshold, short_window, long_window,
             segment_duration, total_duration, sampling_rate
         )
 
         # 输出JSON结果，便于Java捕获
         result = {"detected": bool(detected)}   # 再保险一次转成 bool
+        result_data = {
+            "data": data.tolist(),
+            "sta": sta.tolist(),
+            "lta": lta.tolist(),
+            "ratio": ratio.tolist(),
+            "result_array": result_array.tolist(),
+            "detected": bool(detected)
+        }
+        print(f"echarts={json.dumps(result_data, ensure_ascii=False)}")
         print(f"RESULT_JSON={json.dumps(result)}")
 
     except Exception as e:
