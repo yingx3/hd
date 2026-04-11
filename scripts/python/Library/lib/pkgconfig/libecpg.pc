@@ -1,0 +1,12 @@
+prefix=D:/practice/cesium/backend/scripts/python/Library
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: libecpg
+Description: PostgreSQL libecpg library
+URL: https://www.postgresql.org/
+Version: 17.6
+Requires.private: libpgtypes, libpq
+Libs: -L${libdir} -lecpg
+Libs.private: -lws2_32 -L${libdir} -lpgport D:/practice/cesium/backend/scripts/python/Library/lib/libcrypto.lib D:/practice/cesium/backend/scripts/python/Library/lib/libssl.lib -lpgcommon D:/practice/cesium/backend/scripts/python/Library/lib/z.lib D:/practice/cesium/backend/scripts/python/Library/lib/zstd.lib D:/practice/cesium/backend/scripts/python/Library/lib/libcrypto.lib D:/practice/cesium/backend/scripts/python/Library/lib/libssl.lib D:/practice/cesium/backend/scripts/python/Library/lib/z.lib D:/practice/cesium/backend/scripts/python/Library/lib/zstd.lib D:/practice/cesium/backend/scripts/python/Library/lib/z.lib D:/practice/cesium/backend/scripts/python/Library/lib/zstd.lib D:/practice/cesium/backend/scripts/python/Library/lib/z.lib D:/practice/cesium/backend/scripts/python/Library/lib/zstd.lib D:/practice/cesium/backend/scripts/python/Library/lib/z.lib D:/practice/cesium/backend/scripts/python/Library/lib/zstd.lib
+Cflags: -I${includedir}

@@ -1,0 +1,48 @@
+{
+  "build": "default_h463168d_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/win-64",
+  "constrains": [],
+  "depends": [
+    "libllvm22 >=22.1.2,<22.2.0a0",
+    "libzlib >=1.3.1,<2.0a0",
+    "ucrt >=10.0.20348.0",
+    "vc >=14.3,<15",
+    "vc14_runtime >=14.44.35208",
+    "zstd >=1.5.7,<1.6.0a0"
+  ],
+  "extracted_package_dir": "C:\\Users\\32838\\.conda\\pkgs\\libclang13-22.1.2-default_h463168d_0",
+  "files": [
+    "Library/bin/libclang-13.dll"
+  ],
+  "fn": "libclang13-22.1.2-default_h463168d_0.conda",
+  "legacy_bz2_md5": "6d34e652fff87d266180ae0a1ff11451",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "license_family": "Apache",
+  "link": {
+    "source": "C:\\Users\\32838\\.conda\\pkgs\\libclang13-22.1.2-default_h463168d_0",
+    "type": 1
+  },
+  "md5": "ff42403eb2ba4df53a245577e1eff5fc",
+  "name": "libclang13",
+  "package_tarball_full_path": "C:\\Users\\32838\\.conda\\pkgs\\libclang13-22.1.2-default_h463168d_0.conda",
+  "paths_data": {
+    "paths": [
+      {
+        "_path": "Library/bin/libclang-13.dll",
+        "path_type": "hardlink",
+        "sha256": "f468644e53a8a84aef452a0891894eea25111ba5dee55a1a51a9f252edd3b85b",
+        "sha256_in_prefix": "f468644e53a8a84aef452a0891894eea25111ba5dee55a1a51a9f252edd3b85b",
+        "size_in_bytes": 131280200
+      }
+    ],
+    "paths_version": 1
+  },
+  "requested_spec": "None",
+  "sha256": "745849095f60984e5ddca1bb02c7680c5efdbc75d630dbe01a0e5a13208ae845",
+  "size": 30598759,
+  "subdir": "win-64",
+  "timestamp": 1775517063328,
+  "url": "https://repo.anaconda.com/pkgs/main/win-64/libclang13-22.1.2-default_h463168d_0.conda",
+  "version": "22.1.2"
+}

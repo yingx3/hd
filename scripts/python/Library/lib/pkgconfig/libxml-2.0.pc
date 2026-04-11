@@ -1,0 +1,11 @@
+prefix=D:/practice/cesium/backend/scripts/python/Library 
+exec_prefix=D:/practice/cesium/backend/scripts/python/Library 
+libdir=D:/practice/cesium/backend/scripts/python/Library/lib 
+includedir=D:/practice/cesium/backend/scripts/python/Library/include 
+modules=0 
+Name: libXML 
+Version: 2.13.9 
+Description: libXML library version2. 
+Requires: 
+Libs: -LD:/practice/cesium/backend/scripts/python/Library/lib -lxml2 -liconv -lz 
+Cflags: -ID:/practice/cesium/backend/scripts/python/Library/include/libxml2 -ID:/practice/cesium/backend/scripts/python/Library/include 
