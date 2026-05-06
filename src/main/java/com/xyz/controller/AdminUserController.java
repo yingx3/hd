@@ -1,5 +1,6 @@
 package com.xyz.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
@@ -27,7 +28,6 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Set;
@@ -48,15 +48,12 @@ import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.operation.MathTransform;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
-import org.springframework.web.multipart.MultipartFile;
-import org.springframework.http.MediaType;
+
+//import static jdk.jfr.internal.SecuritySupport.getAbsolutePath;
 
 @RestController
 @RequestMapping("/admin/user")
 public class AdminUserController {
-    // 任务管理：taskId -> TaskInfo
-    private static final Map<String, TaskInfo> avaflowTasks = new ConcurrentHashMap<>();
-    private static final ExecutorService avaflowExecutor = Executors.newCachedThreadPool();
     @PostMapping("/fx")
     public String fxmodelparam(@RequestBody FormData formData) throws  Exception {
         // 获取表单数据
@@ -130,144 +127,46 @@ public class AdminUserController {
 //        return "左下经度:" + z[1] + ", 左下纬度:" + z[0] + ", 右上经度:" + z[3] + ", 右上纬度:" + z[2]+",图片名称："+z[4];
 //        return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称:"+"dangerLevel_20250121_161228_914.png";
     }
-    /**
-     * 山洪泥石流启动动力学模型
-     * 接收前端参数 area/phases/cf/bf，通过环境变量传入 WSL，执行 start1.sh 跑模拟；
-     * 返回 JSON 供前端按区域展示热力图（结果由 start1.sh 在 WSL 内生成）。
-     */
     @PostMapping("/yj")
-    public ResponseEntity<?> yjmodelparam(@RequestBody FormData1 formData1) {
-        // area 参数已由上传的 impact_area.tif 决定，前端无需传 area
-        System.out.println("[山洪泥石流] 接收参数 (phases/cf/bf): " + formData1);
-
-        String phases = formData1.getPhases() != null ? formData1.getPhases() : "1";
-        String cf = formData1.getCf() != null ? formData1.getCf() : "35";
-        String bf = formData1.getBf() != null ? formData1.getBf() : "20";
-
-        String taskId = UUID.randomUUID().toString();
-        TaskInfo info = new TaskInfo(taskId, "PENDING", null, null, null);
-        avaflowTasks.put(taskId, info);
-
-        avaflowExecutor.submit(() -> {
-            info.setStatus("RUNNING");
-            info.setStartedAt(LocalDateTime.now().toString());
-            try {
-                // 使用 grass --exec 在 GRASS 环境下执行 start.sh（按你的本机启动步骤简化为一个命令）
-                String command = "cmd /c start wsl -d Ubuntu-20.04 -- bash -c \"cd /home/wm && grass --exec sh start.sh && exec bash\"";
-                Process process = Runtime.getRuntime().exec(command);
-
-                BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-                BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    System.out.println("[WSL] " + line);
-                }
-                while ((line = errorReader.readLine()) != null) {
-                    System.err.println("[WSL stderr] " + line);
-                }
-
-                int exit = process.waitFor();
-                if (exit == 0) {
-                    info.setStatus("COMPLETED");
-                    info.setMessage("exit 0");
-                } else {
-                    info.setStatus("FAILED");
-                    info.setMessage("exit " + exit);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-                info.setStatus("FAILED");
-                info.setMessage(e.getMessage());
-            } finally {
-                info.setFinishedAt(LocalDateTime.now().toString());
-            }
-        });
-
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("status", "accepted");
-        resp.put("taskId", taskId);
-        // 返回任务查询 URL，便于前端直接轮询或展示
-        resp.put("taskUrl", "/admin/user/yj/status/" + taskId);
-        resp.put("message", "任务已创建，区域由 impact_area.tif 决定；可用 /admin/user/yj/status/{taskId} 查询状态");
-        resp.put("phases", phases);
-        resp.put("cf", cf);
-        resp.put("bf", bf);
-        return ResponseEntity.accepted().body(resp);
-    }
-
-    @GetMapping("/yj/status/{taskId}")
-    public ResponseEntity<?> getYjStatus(@PathVariable String taskId) {
-        TaskInfo info = avaflowTasks.get(taskId);
-        if (info == null) {
-            return ResponseEntity.status(404).body(Map.of("status", "error", "message", "task not found"));
-        }
-        return ResponseEntity.ok(Map.of(
-                "taskId", info.getTaskId(),
-                "status", info.getStatus(),
-                "message", info.getMessage(),
-                "startedAt", info.getStartedAt(),
-                "finishedAt", info.getFinishedAt()
-        ));
-    }
-
-    @PostMapping(value = "/upload_avaflow", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<Map<String, Object>> uploadAvaflowFiles(@RequestParam("files") MultipartFile[] files) {
-        Map<String, Object> resp = new HashMap<>();
-        // 目标路径为 WSL 共享目录
-        String targetDir = "\\\\wsl.localhost\\Ubuntu-20.04\\home\\wm\\DATA_SYS";
+    public String  yjmodelparam(@RequestBody FormData1 formData1)throws Exception{
+        System.out.println(formData1);
+        System.out.println("接收数据成功！");
+        //启动ubuntu20.04
+        // 启动 Ubuntu 系统命令，这里以启动 GNOME 终端为例
         try {
-            Path dirPath = Paths.get(targetDir);
-            if (!Files.exists(dirPath)) {
-                Files.createDirectories(dirPath);
-            }
-            List<String> saved = new ArrayList<>();
-            // 保存文件到目标目录
-            for (MultipartFile mf : files) {
-                if (mf == null || mf.isEmpty()) continue;
-                String original = mf.getOriginalFilename();
-                if (original == null) continue;
-                Path dest = dirPath.resolve(original);
-                try (InputStream in = mf.getInputStream()) {
-                    Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
-                }
-                saved.add(original);
+            // 创建命令：启动 WSL、切换到 /home/syl 并执行 start1.sh
+            String command = "cmd /c start wsl -d Ubuntu-20.04 -- bash -c \"cd /home/syl && sh start1.sh && exec bash\"";
+
+            // 启动 WSL 控制台并执行脚本
+            Process process = Runtime.getRuntime().exec(command);
+
+            // 获取命令的输出
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                System.out.println(line);
             }
 
-            // 强校验：必须包含这三个文件（不区分大小写）
-            Set<String> required = new HashSet<>(Arrays.asList("elev.tif", "debris.tif", "impact_area.tif"));
-            Set<String> presentLower = new HashSet<>();
-            for (String s : saved) {
-                presentLower.add(s.toLowerCase(Locale.ROOT));
-            }
-            List<String> missing = new ArrayList<>();
-            for (String r : required) {
-                if (!presentLower.contains(r.toLowerCase(Locale.ROOT))) missing.add(r);
+            // 获取错误输出
+            BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
+            String errorLine;
+            while ((errorLine = errorReader.readLine()) != null) {
+                System.err.println(errorLine);
             }
 
-            if (!missing.isEmpty()) {
-                // 若缺失，清理已保存的文件并返回错误给前端
-                for (String name : saved) {
-                    try {
-                        Files.deleteIfExists(dirPath.resolve(name));
-                    } catch (Exception ignore) {
-                    }
-                }
-                resp.put("status", "error");
-                resp.put("message", "missing required files");
-                resp.put("missing", missing);
-                return ResponseEntity.badRequest().body(resp);
+            // 等待命令执行完毕
+            int exitCode = process.waitFor();
+            if (exitCode == 0) {
+                System.out.println("WSL 控制台启动成功并执行了 start1.sh 脚本！");
+            } else {
+                System.out.println("启动失败，退出代码：" + exitCode);
             }
 
-            resp.put("status", "ok");
-            resp.put("saved", saved);
-            resp.put("message", "files saved");
-            return ResponseEntity.ok(resp);
         } catch (Exception e) {
             e.printStackTrace();
-            resp.put("status", "error");
-            resp.put("message", e.getMessage());
-            return ResponseEntity.status(500).body(resp);
+            System.out.println("启动命令失败：" + e.getMessage());
         }
+        return "成功执行";
     }
 //自定义formdata类型
     @Data
@@ -283,27 +182,10 @@ public class AdminUserController {
 }
     @Data
     public static class FormData1{
-        private String phases; // 相数 1|2|3
-        private String cf;    // 内部摩擦
-        private String bf;    // 基底摩擦
-        private String ff;    // 水摩擦（可选）
-    }
-
-    @Data
-    public static class TaskInfo {
-        private String taskId;
-        private String status; // PENDING, RUNNING, COMPLETED, FAILED
-        private String message;
-        private String startedAt;
-        private String finishedAt;
-
-        public TaskInfo(String taskId, String status, String message, String startedAt, String finishedAt) {
-            this.taskId = taskId;
-            this.status = status;
-            this.message = message;
-            this.startedAt = startedAt;
-            this.finishedAt = finishedAt;
-        }
+        private String phases;
+        private String cf;
+        private String bf;
+        private String ff;
     }
 
     // 检查 PID 并在少一个时执行代码
@@ -741,118 +623,20 @@ public class AdminUserController {
                 return new Color(grayValue, grayValue, grayValue, 255);
         }
     }
-//    @PostMapping("/GBM")
-//    public ResponseEntity<?> processShp(@RequestBody Map<String, String> body) {
-//        String filename = body.get("filename");
-//        String folder = body.get("folder");
-//
-//        if (filename == null || folder == null) {
-//            return ResponseEntity.badRequest().body("Missing 'filename' or 'folder'");
-//        }
-//
-//        // ✅ 拼接 shapefile 路径（也可以直接用 body 中的路径）
-//        Path shpPath = Paths.get(folder, filename);
-//        Path shpPathTest = Paths.get("data/BCNSL/output/filtered_shapefile.shp");
-//        File shpFile = shpPathTest.toFile();
-//        if (!Files.exists(shpPath)) {
-//            return ResponseEntity.badRequest().body("Shapefile not found: " + shpPath.toAbsolutePath());
-//        }
-//
-//        try {
-//            System.setProperty("org.geotools.shapefile.charset", "GBK");
-//
-//
-//
-//            // 1️⃣ 打开 Shapefile 数据源
-//            ShapefileDataStore store = new ShapefileDataStore(shpFile.toURI().toURL());
-//            store.setCharset(Charset.forName("GBK")); // ANSI在中文系统就是GBK
-//            SimpleFeatureSource featureSource = store.getFeatureSource();
-//            SimpleFeatureCollection collection = featureSource.getFeatures();
-//
-//            // 2️⃣ 获取源坐标系，并创建目标坐标系 EPSG:4326
-//            CoordinateReferenceSystem sourceCRS = featureSource.getSchema().getCoordinateReferenceSystem();
-//            CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
-//
-//            // ⚠️ 如果坐标系不同，则投影转换
-//            if (sourceCRS != null && !CRS.equalsIgnoreMetadata(sourceCRS, targetCRS)) {
-//                System.out.println("Reprojecting shapefile from " + sourceCRS.getName() + " → EPSG:4326 ...");
-//                collection = new ReprojectingFeatureCollection(collection, targetCRS);
-//            } else {
-//                System.out.println("Shapefile already in EPSG:4326 or CRS undefined.");
-//            }
-//
-//            // 3️⃣ 保留字段
-//            List<String> keepFields = Arrays.asList("Id", "风险", "geometry");
-//            DefaultFeatureCollection filteredCollection = new DefaultFeatureCollection();
-//
-//            try (SimpleFeatureIterator iterator = collection.features()) {
-//                while (iterator.hasNext()) {
-//                    SimpleFeature feature = iterator.next();
-//
-//                    Object idValue = feature.getAttribute("Id");
-//                    Object suscValue = feature.getAttribute("风险");
-//                    Object geometry = feature.getDefaultGeometry();
-//
-//                    SimpleFeatureType featureType = feature.getFeatureType();
-//                    SimpleFeatureBuilder builder = new SimpleFeatureBuilder(featureType);
-//
-//                    for (String field : featureType.getAttributeDescriptors()
-//                            .stream().map(d -> d.getLocalName()).toList()) {
-//                        if (field.equals(featureType.getGeometryDescriptor().getLocalName())) {
-//                            builder.add(geometry);
-//                        } else if (field.equals("Id")) {
-//                            builder.add(idValue);
-//                        } else if (field.equals("风险")) {
-//                            builder.add(suscValue);
-//                        } else {
-//                            builder.add(null);
-//                        }
-//                    }
-//
-//                    filteredCollection.add(builder.buildFeature(null));
-//                }
-//            }
-//
-//            // 4️⃣ 转换为 GeoJSON
-//            FeatureJSON fjson = new FeatureJSON();
-//            ByteArrayOutputStream os = new ByteArrayOutputStream();
-//            fjson.writeFeatureCollection(filteredCollection, os);
-//            String geojson = os.toString();
-//
-//            // 5️⃣ 将 GeoJSON 保存到本地
-//            Path outputDir = Paths.get("data/output");
-//            if (!Files.exists(outputDir)) {
-//                Files.createDirectories(outputDir);
-//            }
-//
-//            // 输出文件路径：例如 data/output/filtered_shapefile.geojson
-//            String outputFileName = filename.replace(".shp", "_reprojected.geojson");
-//            Path outputPath = outputDir.resolve(outputFileName);
-//
-//            try (FileWriter writer = new FileWriter(outputPath.toFile())) {
-//                writer.write(geojson);
-//            }
-//
-//            System.out.println("✅ GeoJSON 已保存到：" + outputPath.toAbsolutePath());
-//
-//            // 5️⃣ 返回结果
-//            Map<String, Object> resp = new HashMap<>();
-//            resp.put("status", "ok");
-//            resp.put("layerId", "shp-" + System.currentTimeMillis());
-//            resp.put("geojson", geojson);
-//
-//            return ResponseEntity.ok(resp);
-//
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//            return ResponseEntity.internalServerError().body("Error processing shapefile: " + e.getMessage());
-//        }
-//    }
     @PostMapping("/GBM")
     public ResponseEntity<?> runInference(@RequestBody Map<String, Object> body) {
         try {
             //  获取文件数组
             List<Map<String, Object>> files = (List<Map<String, Object>>) body.get("files");
+            // 1. 取出 form（注意：它是 Map，不是 List！）
+            Map<String, Object> form = (Map<String, Object>) body.get("form");
+
+// 2. 把 Map 转成 JSON 字符串（关键步骤！）
+            ObjectMapper objectMapper = new ObjectMapper();
+            String jsonStr = objectMapper.writeValueAsString(form);
+
+            System.out.print(jsonStr);
+//            {files=[{originalFileName=waternet_new1.prj, savedPath=..\..\src\assets\input\waternet_new1.prj}], form={aspect=150, curvature=0.002, fault_distance=30000, ndvi=0.001, rainfall=700, relief_amplitude=250}}
             if (files == null || files.isEmpty()) {
                 return ResponseEntity.badRequest().body("Missing 'files'");
             }
@@ -865,17 +649,28 @@ public class AdminUserController {
 
             File firstFile = new File(firstPath);
             String folder = firstFile.getParent();
-            System.out.println("[INFO] Using folder: " + folder);
+            String shpfile = firstFile.getName();
+
+            System.out.println(firstPath);
 
             //  调用 Python 脚本
-            String pythonExe = "D:\\application\\miniconda3\\envs\\GlaSys\\python.exe";
-            String pythonScript = "E:\\Projects\\ZHLXT\\算法\\冰川型灾害链判识\\platform\\src\\inference.py";
+//            String pythonDir = "./scripts/python";
+//            // 生成 干净的、解析好的绝对路径（没有 ..）
+//            File file = new File(pythonDir).getCanonicalFile();
+//            String realPath = file.getAbsolutePath();
+//            // 打印最终真实路径
+//            System.out.println("✅ 解析后真实路径：" + realPath);
+            String pythonExe = "E:/Projects/ZHLXT/backend/hd-mao_0322/scripts/python/python.exe";
+            String pythonScript = "E:/Projects/ZHLXT/demo/src/assets/src/inference.py";
 
-            ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, folder);
+            ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, shpfile, jsonStr);
+            //将错误信息和正常输出信息合并到一起
             pb.redirectErrorStream(true);
+
             Process process = pb.start();
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+//            System.out.print(reader);
             String line;
             String outputShpPath = null;
             while ((line = reader.readLine()) != null) {
@@ -917,6 +712,7 @@ public class AdminUserController {
             resp.put("status", "ok");
             resp.put("geojson", geojson);
             resp.put("folder", folder);
+//            System.out.print(resp);
             return ResponseEntity.ok(resp);
 
         } catch (Exception e) {
@@ -934,7 +730,7 @@ public class AdminUserController {
             if (fileInfo == null || fileInfo.get("savedPath") == null) {
                 return ResponseEntity.badRequest().body("Missing 'file.savedPath'");
             }
-
+//System.out.println(fileInfo);
             String excelPath = fileInfo.get("savedPath");
             File excelFile = new File(excelPath);
             if (!excelFile.exists()) {
@@ -957,16 +753,16 @@ public class AdminUserController {
             int sampling_rate = params.containsKey("sampling_rate") ? Integer.parseInt(params.get("sampling_rate").toString()) : 100;
 
             // 调用Python脚本
-            String pythonExe = "D:\\application\\miniconda3\\envs\\test\\python.exe";  // 调整为您的Python环境
+            String pythonExe =  "./scripts/python/python.exe";  // 调整为您的Python环境
             String pythonScript = "suanfa\\seismic\\seismic.py";  // 修改后的Python文件路径
             ProcessBuilder pb = new ProcessBuilder(
-                pythonExe, pythonScript, excelPath,
-                String.valueOf(threshold),
-                String.valueOf(short_window),
-                String.valueOf(long_window),
-                String.valueOf(segment_duration),
-                String.valueOf(total_duration),
-                String.valueOf(sampling_rate)
+                    pythonExe, pythonScript, excelPath,
+                    String.valueOf(threshold),
+                    String.valueOf(short_window),
+                    String.valueOf(long_window),
+                    String.valueOf(segment_duration),
+                    String.valueOf(total_duration),
+                    String.valueOf(sampling_rate)
             );  // 传递文件路径和参数作为参数
             pb.redirectErrorStream(true);
             Process process = pb.start();
@@ -974,13 +770,16 @@ public class AdminUserController {
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
             String line;
             String outputJson = "";
+            String echarts_data ="";
             while ((line = reader.readLine()) != null) {
                 System.out.println("[Python] " + line);
                 if (line.startsWith("RESULT_JSON=")) {
                     outputJson = line.substring("RESULT_JSON=".length()).trim();
                 }
+                if(line.startsWith("echarts=")){
+                    echarts_data=line.substring("echarts=".length()).trim();
+                }
             }
-
             int exitCode = process.waitFor();
             if (exitCode != 0) {
                 return ResponseEntity.internalServerError().body("Python script failed");
@@ -991,10 +790,12 @@ public class AdminUserController {
             }
 
             // 解析JSON（简单手动解析，或用Jackson）
-            boolean detected = outputJson.contains("\"detected\": true");
+                boolean detected = outputJson.contains("\"detected\": true");
+
 
             Map<String, Object> resp = new HashMap<>();
             resp.put("detected", detected);
+            resp.put("echarts_data",echarts_data);
             return ResponseEntity.ok(resp);
 
         } catch (Exception e) {
@@ -1002,6 +803,7 @@ public class AdminUserController {
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
     }
+
 }
 
 

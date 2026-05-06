@@ -1,0 +1,13 @@
+prefix=D:/practice/cesium/backend/scripts/python/Library
+exec_prefix=D:/practice/cesium/backend/scripts/python/Library
+libdir=D:/practice/cesium/backend/scripts/python/Library/lib
+sharedlibdir=D:/practice/cesium/backend/scripts/python/Library/lib
+includedir=D:/practice/cesium/backend/scripts/python/Library/include
+
+Name: zlib
+Description: zlib compression library
+Version: 1.3.1
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}

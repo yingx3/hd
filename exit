@@ -1,0 +1,24 @@
+[33mcommit 176c978d0182384bb9c3329c629331d7f681b73a[m[33m ([m[1;31morigin/master[m[33m)[m
+Author: 尚毅力 <14755090+shang-yili@user.noreply.gitee.com>
+Date:   Fri Feb 28 10:26:11 2025 +0800
+
+    初始化
+
+[33mcommit 1179d531fc3bdfd54df217fa01123fd6d1daccd5[m[33m ([m[1;31morigin/mao[m[33m)[m
+Author: wangmao03 <2840850672@qq.com>
+Date:   Wed Dec 24 16:28:45 2025 +0800
+
+    新增冰川型灾害链判识和地震动信号判识接口
+
+[33mcommit b1687ef173625d99da5fb13355c25fae8df49f7c[m
+Author: 尚毅力 <14755090+shang-yili@user.noreply.gitee.com>
+Date:   Wed Dec 24 18:53:39 2025 +0800
+
+    初始化1
+
+[33mcommit 33810049395f9aacd42c7b161acec5be6cfd7c29[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m)[m
+Merge: b1687ef 1179d53
+Author: 尚毅力 <14755090+shang-yili@user.noreply.gitee.com>
+Date:   Wed Dec 24 21:35:41 2025 +0800
+
+    merge remote-tracking branch 'origin/mao'

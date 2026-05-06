@@ -1,1 +1,15 @@
-com\xyz\controller\AdminUserController$TaskInfo.class
+com\xyz\controller\AdminUserController.class
+com\xyz\controller\AdminUserController$FormData.class
+com\xyz\service\TxtProcessingService.class
+com\xyz\controller\AdminUserController$FormData1.class
+com\xyz\mapper\AdminUserMapper.class
+com\xyz\demo1Application.class
+com\xyz\service\AdminUserService.class
+com\xyz\configuration\CorsConfig.class
+com\xyz\model\AdminUserPO.class
+com\xyz\model\AdminUserLoginDTO.class
+com\xyz\service\impl\AdminUserServiceImpl.class
+com\xyz\model\AdminUserLoginVO.class
+com\xyz\controller\AscToGeoJSONConverter$AscMetadata.class
+com\xyz\controller\AscToGeoJSONConverter.class
+com\xyz\configuration\WebSocketConfig.class
