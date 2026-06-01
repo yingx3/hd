@@ -559,7 +559,8 @@ public class AdminUserController {
             }else{
                 uniqueFileName= "redGradient_" + timestamp + ".png";
             }
-            ImageIO.write(image, "png", new java.io.File("E:\\softwares\\nginx-1.26.2\\nginx-1.26.2\\html\\"+uniqueFileName));
+//            ImageIO.write(image, "png", new java.io.File("E:\\softwares\\nginx-1.26.2\\nginx-1.26.2\\html\\"+uniqueFileName));
+            ImageIO.write(image, "png", new java.io.File("../../nginx-1.24.0/html/" + uniqueFileName));
             // 删除临时文件
             Files.deleteIfExists(inputFile);
 //            System.out.println("临时文件已销毁。");

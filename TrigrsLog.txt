@@ -1,7 +1,7 @@
  
  Starting TRIGRS 2.0.06b 14 Sep 2009
- Date 12/22/2025
- Time 16:32:41
+ Date 05/27/2026
+ Time 19:17:39
  initialization file -->tr_in.txt                                                                                                                                                                                                                                                      
  -- LISTING OF INITIALIZATION FILE --
  Name of project (up to 255 characters)                                                                                                                                                                                                                         
@@ -41,4 +41,74 @@
  File name of grid of D8 runoff receptor cell numbers (nxtfil)                                                                                                                                                                                                  
  Data\tutorial\TIdscelGrid_tutorial.asc                                                                                                                                                                                                                         
  File name of list of defining runoff computation order (ndxfil)                                                                                                                                                                                                
- Data\tutorial\TIcelindxList_tutorial.txt               
+ Data\tutorial\TIcelindxList_tutorial.txt                                                                                                                                                                                                                       
+ File name of list of all runoff receptor cells  (dscfil)                                                                                                                                                                                                       
+ Data\tutorial\TIdscelList_tutorial.txt                                                                                                                                                                                                                         
+ File name of list of runoff weighting factors  (wffil)                                                                                                                                                                                                         
+ Data\tutorial\TIwfactorList_tutorial.txt                                                                                                                                                                                                                       
+ Folder where output grid files will be stored  (folder)                                                                                                                                                                                                        
+ Data\result\                                                                                                                                                                                                                    
+ Identification code to be added to names of output files (suffix)                                                                                                                                                                                              
+ tutorial
+ Save grid files of runoff? Enter T (.true.) or F (.false.)                                                                                                                                                                                                     
+  F
+ Save grid of minimum factor of safety? Enter Enter T (.true.) or F (.false.)                                                                                                                                                                                   
+  T
+ Save grid of depth of minimum factor of safety? Enter Enter T (.true.) or F (.false.)                                                                                                                                                                          
+  T
+ Save grid of pore pressure at depth of minimum factor of safety? Enter Enter T (.true.) or F (.false.)                                                                                                                                                         
+  T
+ Save grid files of actual infiltration rate? Enter T (.true.) or F (.false.)                                                                                                                                                                                   
+  F
+ Save grid files of unsaturated zone basal flux? Enter T (.true.) or F (.false.)                                                                                                                                                                                
+  F
+ Save listing of pressure head and factor of safety ("flag")? (Enter -2 detailed, -1 normal, 0 none)                                                                                                                                                            
+  -2
+ Number of times to save output grids                                                                                                                                                                                                                           
+   1
+ Times of output grids                                                                                                                                                                                                                                          
+   216000.
+ Skip other timesteps? Enter T (.true.) or F (.false.)                                                                                                                                                                                                          
+  F
+ Use analytic solution for fillable porosity?  Enter T (.true.) or F (.false.)                                                                                                                                                                                  
+  T
+ Estimate positive pressure head in rising water table zone (i.e. in lower part of unsat zone)?  Enter T (.true.) or F (.false.)                                                                                                                                
+  T
+ Use psi0=-1/alpha? Enter T (.true.) or F (.false.) (False selects the default value, psi0=0)                                                                                                                                                                   
+  F
+ Log mass balance results?   Enter T (.true.) or F (.false.)                                                                                                                                                                                                    
+  T
+ Flow direction (enter "gener", "slope", or "hydro")                                                                                                                                                                                                            
+ gener
+ Add steady background flux to transient infiltration rate to prevent drying beyond the initial conditions during periods of zero infiltration?                                                                                                                 
+  T
+ -- END OF INITIALIZATION DATA --
+ 
+ TRIGRS, version 2, Tutorial                                                                                                                                                                                                                                    
+ 
+ Input file name,            Cell count
+ Slope angle grid
+ Data\tutorial\slope.asc  702681  data cells
+ Set number of cells for pore-pressure factor of safety computations to   702681
+ Check initialization file: 
+ Value of imax > number of grid cells.
+ One property zone, no grid required!
+ ---------------******---------------
+ Adjusted steady infiltration rate at   0  cells
+ Skipped runoff-routing computations;
+ Runoff routing input data did not exist.
+ ---------------******---------------
+ Input file name,          Cell count
+ ******** Output times ********
+ number, timestep #,  time
+   1  2  10800.0
+ Starting saturated-zone
+ computations for finite-depth
+   702681  cells completed
+ Max. terms used by error-function series  12
+ Min. terms used by error-function series  5
+ Saturated-zone nonconvergent cells: 
+   0
+ TRIGRS finished normally
+ Date 05/27/2026
+ Time 19:18:37
