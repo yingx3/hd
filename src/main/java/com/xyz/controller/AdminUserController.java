@@ -48,6 +48,7 @@ import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.operation.MathTransform;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 //import static jdk.jfr.internal.SecuritySupport.getAbsolutePath;
 
@@ -826,6 +827,7 @@ public class AdminUserController {
         int slide_length = params.containsKey("slide_length") ? Integer.parseInt(params.get("slide_length").toString()) : 20;
         String pythonExe =  "./scripts/python/python.exe";  // 调整为您的Python环境
         String pythonScript = "./suanfa/avainit/bedding.py";  // 修改后的Python文件路径
+
         try{
             ProcessBuilder pb = new ProcessBuilder(
                     pythonExe, pythonScript,
@@ -843,14 +845,166 @@ public class AdminUserController {
             pb.redirectErrorStream(true);
             Process process = pb.start();
             // ========== 关键：同步读取并打印 Python 输出 ==========
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), "UTF-8"))) {
                 String line;
+                boolean jsonStart = false;
+                StringBuilder jsonSb = new StringBuilder();
+//                StringBuilder currentArrayLine = new StringBuilder();
+                boolean inArray = false;
+                // 逐行实时打印输出
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("Python 输出：" + line);
+                }
+
+            }
+
+            // 等待进程执行完毕
+            int exitCode = process.waitFor();
+            System.out.println("Python 进程结束，退出码：" + exitCode);
+
+
+        }catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+
+        }
+
+
+
+        Map<String, Object> resp = new HashMap<>();
+        return ResponseEntity.ok(resp);
+    }
+    private double[] parseDoubleArray(String line) {
+        try {
+            int start = line.indexOf('[') + 1;
+            int end = line.indexOf(']');
+            String numbersStr = line.substring(start, end).trim();
+            String[] numberStrs = numbersStr.split("\\s+");
+            List<Double> numList = new ArrayList<>();
+
+            for (String s : numberStrs) {
+                if (!s.isEmpty() && !s.contains("...")) {
+                    numList.add(Double.parseDouble(s));
+                }
+            }
+
+            double[] result = new double[numList.size()];
+            for (int i = 0; i < result.length; i++) {
+                result[i] = numList.get(i);
+            }
+            return result;
+        } catch (Exception e) {
+            System.err.println("解析数组失败：" + e.getMessage());
+            return new double[0];
+        }
+    }
+
+    @PostMapping("/bedding_inverse")
+    public ResponseEntity<?> processsInverse(@RequestBody Map<String,Object> body){
+        Map<String, Object> params = (Map<String, Object>) body;
+
+//        // 提取参数值，设置默认值
+        int slope_angle = params.containsKey("slope_angle") ? Integer.parseInt(params.get("slope_angle").toString()) : 60;
+        int inverse_angle = params.containsKey("inverse_angle") ? Integer.parseInt(params.get("inverse_angle").toString()) : 15;
+        int cohesion = params.containsKey("cohesion") ? Integer.parseInt(params.get("cohesion").toString()) : 15;
+        int friction_angle = params.containsKey("friction_angle") ? Integer.parseInt(params.get("friction_angle").toString()) : 20;
+        int rock_density = params.containsKey("rock_density") ? Integer.parseInt(params.get("rock_density").toString()) : 20;
+        double permeability = params.containsKey("permeability") ? Double.parseDouble(params.get("permeability").toString()) : 0001;
+        int ice_thickness = params.containsKey("ice_thickness") ? Integer.parseInt(params.get("ice_thickness").toString()) : 4;
+        int slope_height = params.containsKey("slope_height") ? Integer.parseInt(params.get("slope_height").toString()) : 10;
+        int melt_duration = params.containsKey("melt_duration") ? Integer.parseInt(params.get("melt_duration").toString()) : 240;
+        int bedding_space = params.containsKey("bedding_space") ? Integer.parseInt(params.get("bedding_space").toString()) : 20;
+        String pythonExe =  "./scripts/python/python.exe";  // 调整为您的Python环境
+        String pythonScript = "./suanfa/avainit/bedding_inverse.py";  // 修改后的Python文件路径
+
+        try{
+            ProcessBuilder pb = new ProcessBuilder(
+                    pythonExe, pythonScript,
+                    String.valueOf(melt_duration),
+                    String.valueOf(slope_angle),
+                    String.valueOf(inverse_angle),
+                    String.valueOf(ice_thickness),
+                    String.valueOf(slope_height),
+                    String.valueOf(bedding_space),
+                    String.valueOf(cohesion),
+                    String.valueOf(friction_angle),
+                    String.valueOf(rock_density),
+                    String.valueOf(permeability)
+            );  // 传递文件路径和参数作为参数
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            // ========== 关键：同步读取并打印 Python 输出 ==========
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), "UTF-8"))) {
+                String line;
+                boolean jsonStart = false;
+                StringBuilder jsonSb = new StringBuilder();
+//                StringBuilder currentArrayLine = new StringBuilder();
+                boolean inArray = false;
+                // 逐行实时打印输出
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("Python 输出：" + line);
+                }
+
+            }
+            // 等待进程执行完毕
+            int exitCode = process.waitFor();
+            System.out.println("Python 进程结束，退出码：" + exitCode);
+        }catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+
+        }
+        Map<String, Object> resp = new HashMap<>();
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/bedding_wedge")
+    public ResponseEntity<?> processsWedge(@RequestBody Map<String,Object> body){
+        Map<String, Object> params = (Map<String, Object>) body;
+        int slope_angle = params.containsKey("slope_angle") ? Integer.parseInt(params.get("slope_angle").toString()) : 60;
+        int normal_vector = params.containsKey("normal_vector") ? Integer.parseInt(params.get("normal_vector").toString()) : 15;
+        int cohesion = params.containsKey("cohesion") ? Integer.parseInt(params.get("cohesion").toString()) : 15;
+        int friction_angle = params.containsKey("friction_angle") ? Integer.parseInt(params.get("friction_angle").toString()) : 20;
+        int rock_density = params.containsKey("rock_density") ? Integer.parseInt(params.get("rock_density").toString()) : 20;
+        double permeability = params.containsKey("permeability") ? Double.parseDouble(params.get("permeability").toString()) : 0001;
+        int ice_thickness = params.containsKey("ice_thickness") ? Integer.parseInt(params.get("ice_thickness").toString()) : 4;
+        int slope_height = params.containsKey("slope_height") ? Integer.parseInt(params.get("slope_height").toString()) : 10;
+        int melt_duration = params.containsKey("melt_duration") ? Integer.parseInt(params.get("melt_duration").toString()) : 240;
+        int square = params.containsKey("square") ? Integer.parseInt(params.get("square").toString()) : 20;
+        int fracture = params.containsKey("fracture") ? Integer.parseInt(params.get("fracture").toString()) : 20;
+
+        String pythonExe =  "./scripts/python/python.exe";  // 调整为您的Python环境
+        String pythonScript = "./suanfa/avainit/bedding_wedget.py";  // 修改后的Python文件路径
+
+        try{
+            ProcessBuilder pb = new ProcessBuilder(
+                    pythonExe, pythonScript,
+                    String.valueOf(slope_angle),
+                    String.valueOf(normal_vector),
+                    String.valueOf(cohesion),
+                    String.valueOf(friction_angle),
+                    String.valueOf(rock_density),
+                    String.valueOf(permeability),
+                    String.valueOf(ice_thickness),
+                    String.valueOf(slope_height),
+                    String.valueOf(melt_duration),
+                    String.valueOf(square),
+                    String.valueOf(fracture)
+
+            );  // 传递文件路径和参数作为参数
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            // ========== 关键：同步读取并打印 Python 输出 ==========
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), "UTF-8"))) {
+                String line;
+                boolean jsonStart = false;
+                StringBuilder jsonSb = new StringBuilder();
+                boolean inArray = false;
                 // 逐行实时打印输出
                 while ((line = reader.readLine()) != null) {
                     System.out.println("Python 输出：" + line);
                 }
             }
-
             // 等待进程执行完毕
             int exitCode = process.waitFor();
             System.out.println("Python 进程结束，退出码：" + exitCode);
@@ -858,8 +1012,6 @@ public class AdminUserController {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
-
-
         Map<String, Object> resp = new HashMap<>();
         return ResponseEntity.ok(resp);
     }

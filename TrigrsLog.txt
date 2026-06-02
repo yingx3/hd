@@ -1,7 +1,7 @@
  
  Starting TRIGRS 2.0.06b 14 Sep 2009
- Date 05/27/2026
- Time 19:17:39
+ Date 06/01/2026
+ Time 14:38:48
  initialization file -->tr_in.txt                                                                                                                                                                                                                                                      
  -- LISTING OF INITIALIZATION FILE --
  Name of project (up to 255 characters)                                                                                                                                                                                                                         
@@ -110,5 +110,5 @@
  Saturated-zone nonconvergent cells: 
    0
  TRIGRS finished normally
- Date 05/27/2026
- Time 19:18:37
+ Date 06/01/2026
+ Time 14:40:02

@@ -4,6 +4,7 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import sys
+import json
 
 class bedding():
     def __init__(self, melt_duration, slope_angle, slide_angle, ice_thickness,
@@ -89,11 +90,23 @@ class bedding():
     def run(self):
         t = self.t
         fos = self.factor_of_safety(t)
+        # 输出完整数组（无省略、无格式、Java可直接解析）
+        data = {
+        "t": t.tolist(),
+        "fos": fos.tolist()
+        }
+        # 写入文件：路径 .\output_bedding.txt，自动覆写
+        with open(r'src/main/resources/static/output_bedding.txt', 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False)
+
+        # 只输出一行标记（Java 可以用来判断是否完成）
+        print("FILE_SAVED: output_bedding.txt")
+
 
 
         # 保存结果到txt
         result = 0 if np.any(fos < 1) else 1
-        np.savetxt(r'.\output_bedding.txt', np.array([result]))
+        # np.savetxt(r'.\output_bedding.txt', np.array([result]))
 
         # 绘图
         fig, ax = plt.subplots(layout='constrained')
@@ -104,12 +117,12 @@ class bedding():
         ax.set_ylim(bottom=np.min(fos))
         plt.legend()
         plt.title('Bedding Slope Stability - Factor of Safety')
-        plt.show()
+        # plt.show()
         # 打印 t 数组
-        print("t_array:", t)
-    # 打印 fos 数组
-        print("fos_array:", fos)
-        print("result:",result)
+    #     print("t_array:", t)
+    # # 打印 fos 数组
+    #     print("fos_array:", fos)
+    #     print("result:",result)
 
 # ===================== 直接运行 =====================
 if __name__ == '__main__':
