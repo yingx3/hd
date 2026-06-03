@@ -1,27 +1,3 @@
-###############
-LibTIFF Project
-###############
-
-The LibTIFF project provides free software maintained by a small community of software developers.  See
-:doc:`acknowledgements` for further details.
-
-Questions should be sent to the :doc:`mailinglist`.
-
-.. note::
-
-    Please do not email the maintainers personally, especially when asking
-    questions such as "when is the next release?".  Please use the public mailing lists.
-    While the maintainers and contributors to LibTIFF are primarily professional software
-    developers, none of us are paid to work on LibTIFF directly, and almost all the
-    activity is voluntary and unpaid.
-
-
-.. toctree::
-    :maxdepth: 1
-    :titlesonly:
-
-    license
-    mailinglist
-    bugs
-    psc
-    acknowledgements
+version https://git-lfs.github.com/spec/v1
+oid sha256:46cb41b5955a0497a029d4c738ec75cc0277c31b656ce540e7ae96d5e3de8c2c
+size 755
