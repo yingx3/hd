@@ -1,6 +1,7 @@
 package com.xyz.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.Data;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
@@ -797,6 +798,115 @@ public class AdminUserController {
             resp.put("detected", detected);
             resp.put("echarts_data",echarts_data);
             return ResponseEntity.ok(resp);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/SDP_Start")
+    public ResponseEntity<?> processSDPStart(@RequestBody Map<String, Object> body) {
+        String projectRoot = "E:/Projects/ZHLXT/backend/hd-mao_0322";
+        String pythonExe = projectRoot + "/scripts/python/python.exe";
+        String pythonScript = projectRoot + "/suanfa/SDP_Start/python/run.py";
+        String convertScript = projectRoot + "/suanfa/SDP_Start/python/tif_to_json.py";
+
+        String rainPath = body.containsKey("rain_path") ? body.get("rain_path").toString() : projectRoot + "/suanfa/SDP_Start/rainfall_tif";
+        String tempPath = body.containsKey("temp_path") ? body.get("temp_path").toString() : projectRoot + "/suanfa/SDP_Start/tem_tif";
+        String outputDir = body.containsKey("output_dir") ? body.get("output_dir").toString() : projectRoot + "/data/SDP_Results";
+        double iceContent = body.containsKey("ice_content") ? Double.parseDouble(body.get("ice_content").toString()) : 0.2;
+        String tempPattern = body.containsKey("temp_pattern") ? body.get("temp_pattern").toString() : "temp_%d.tif";
+
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                    pythonExe, pythonScript,
+                    "--rain_path", rainPath,
+                    "--temp_path", tempPath,
+                    "--output_dir", outputDir,
+                    "--ice_content", String.valueOf(iceContent),
+                    "--temp_pattern", tempPattern
+            );
+            pb.directory(new File(projectRoot));
+            pb.redirectErrorStream(true);
+
+            Process process = pb.start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), "GBK"))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("SDP Python: " + line);
+                }
+            }
+            int exitCode = process.waitFor();
+            System.out.println("SDP Python 进程结束，退出码：" + exitCode);
+            if (exitCode != 0) {
+                return ResponseEntity.internalServerError().body("run.py 执行失败，退出码：" + exitCode);
+            }
+
+            String tifPath = outputDir + "/ZMAX_final.tif";
+            File tifFile = new File(tifPath);
+            if (!tifFile.exists()) {
+                return ResponseEntity.internalServerError().body("输出文件不存在: " + tifPath);
+            }
+
+            ProcessBuilder pb2 = new ProcessBuilder(pythonExe, convertScript, tifPath);
+            pb2.directory(new File(projectRoot));
+            pb2.redirectErrorStream(true);
+
+            Process process2 = pb2.start();
+            String jsonResult = "";
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process2.getInputStream(), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("Convert: " + line);
+                    if (line.startsWith("RESULT_JSON=")) {
+                        jsonResult = line.substring("RESULT_JSON=".length()).trim();
+                    }
+                }
+            }
+            int exitCode2 = process2.waitFor();
+            if (exitCode2 != 0 || jsonResult.isEmpty()) {
+                return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败");
+            }
+
+            Map<String, Object> rawResult = new ObjectMapper().readValue(jsonResult, new TypeReference<Map<String, Object>>() {});
+            boolean isProjected = Boolean.TRUE.equals(rawResult.get("isProjected"));
+            double west  = Double.parseDouble(rawResult.get("west").toString());
+            double south = Double.parseDouble(rawResult.get("south").toString());
+            double east  = Double.parseDouble(rawResult.get("east").toString());
+            double north = Double.parseDouble(rawResult.get("north").toString());
+
+            double minLng, minLat, maxLng, maxLat;
+            if (isProjected && rawResult.get("crsWkt") != null && !rawResult.get("crsWkt").toString().isEmpty()) {
+                String crsWkt = rawResult.get("crsWkt").toString();
+                CoordinateReferenceSystem sourceCRS = CRS.parseWKT(crsWkt);
+                CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
+                MathTransform transform = CRS.findMathTransform(sourceCRS, targetCRS);
+                double[] sw = new double[]{west, south};
+                double[] ne = new double[]{east, north};
+                transform.transform(sw, 0, sw, 0, 1);
+                transform.transform(ne, 0, ne, 0, 1);
+                minLng = sw[0];
+                minLat = sw[1];
+                maxLng = ne[0];
+                maxLat = ne[1];
+            } else {
+                minLng = west;
+                minLat = south;
+                maxLng = east;
+                maxLat = north;
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("minLng", Math.round(minLng * 1000000.0) / 1000000.0);
+            result.put("minLat", Math.round(minLat * 1000000.0) / 1000000.0);
+            result.put("maxLng", Math.round(maxLng * 1000000.0) / 1000000.0);
+            result.put("maxLat", Math.round(maxLat * 1000000.0) / 1000000.0);
+            result.put("imageBase64", rawResult.get("imageBase64"));
+            result.put("width", rawResult.get("width"));
+            result.put("height", rawResult.get("height"));
+            result.put("valueRange", rawResult.get("valueRange"));
+            return ResponseEntity.ok(result);
 
         } catch (Exception e) {
             e.printStackTrace();

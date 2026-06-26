@@ -1,0 +1,7 @@
+
+Name: Graphite2
+Description: Font rendering engine for Complex Scripts
+Version: 3.0.1
+Libs: -LD:/practice/cesium/backend/scripts/python/Library/lib -lgraphite2
+Cflags: -ID:/practice/cesium/backend/scripts/python/Library/include
+

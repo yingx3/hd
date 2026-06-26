@@ -1,0 +1,10 @@
+{
+  "minLng" : 94.893512,
+  "minLat" : 29.743909,
+  "maxLng" : 94.962115,
+  "maxLat" : 29.847476,
+  "width" : 644,
+  "height" : 1159,
+  "valueRange" : [ 10.9237, 130.6919 ],
+  "imageBase64" : "¼û data/SDP_Results/imageBase64.txt"
+}

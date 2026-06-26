@@ -1,0 +1,123 @@
+{
+  "build": "py311haa95532_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/win-64",
+  "constrains": [],
+  "depends": [
+    "python >=3.11,<3.12.0a0"
+  ],
+  "extracted_package_dir": "C:\\Users\\32838\\.conda\\pkgs\\cycler-0.12.1-py311haa95532_0",
+  "files": [
+    "Lib/site-packages/cycler-0.12.1.dist-info/INSTALLER",
+    "Lib/site-packages/cycler-0.12.1.dist-info/METADATA",
+    "Lib/site-packages/cycler-0.12.1.dist-info/RECORD",
+    "Lib/site-packages/cycler-0.12.1.dist-info/REQUESTED",
+    "Lib/site-packages/cycler-0.12.1.dist-info/WHEEL",
+    "Lib/site-packages/cycler-0.12.1.dist-info/direct_url.json",
+    "Lib/site-packages/cycler-0.12.1.dist-info/licenses/LICENSE",
+    "Lib/site-packages/cycler-0.12.1.dist-info/top_level.txt",
+    "Lib/site-packages/cycler/__init__.py",
+    "Lib/site-packages/cycler/__pycache__/__init__.cpython-311.pyc",
+    "Lib/site-packages/cycler/py.typed"
+  ],
+  "fn": "cycler-0.12.1-py311haa95532_0.conda",
+  "legacy_bz2_md5": "32f93ad13b3c62cb317f59396ef25d42",
+  "license": "BSD-3-Clause",
+  "license_family": "BSD",
+  "link": {
+    "source": "C:\\Users\\32838\\.conda\\pkgs\\cycler-0.12.1-py311haa95532_0",
+    "type": 1
+  },
+  "md5": "d38a58c2c1c99501248218d828f37aef",
+  "name": "cycler",
+  "package_tarball_full_path": "C:\\Users\\32838\\.conda\\pkgs\\cycler-0.12.1-py311haa95532_0.conda",
+  "paths_data": {
+    "paths": [
+      {
+        "_path": "Lib/site-packages/cycler-0.12.1.dist-info/INSTALLER",
+        "path_type": "hardlink",
+        "sha256": "d0edee15f91b406f3f99726e44eb990be6e34fd0345b52b910c568e0eef6a2a8",
+        "sha256_in_prefix": "d0edee15f91b406f3f99726e44eb990be6e34fd0345b52b910c568e0eef6a2a8",
+        "size_in_bytes": 5
+      },
+      {
+        "_path": "Lib/site-packages/cycler-0.12.1.dist-info/METADATA",
+        "path_type": "hardlink",
+        "sha256": "084e74e9abc936f417e61cd6b2adab8920d58b4b8c4d64ba9d59c0f06d87181e",
+        "sha256_in_prefix": "084e74e9abc936f417e61cd6b2adab8920d58b4b8c4d64ba9d59c0f06d87181e",
+        "size_in_bytes": 3873
+      },
+      {
+        "_path": "Lib/site-packages/cycler-0.12.1.dist-info/RECORD",
+        "path_type": "hardlink",
+        "sha256": "69e93a764f38e9c1e5326353ad29b31667f3c696127e01095d727db66fc9a82a",
+        "sha256_in_prefix": "69e93a764f38e9c1e5326353ad29b31667f3c696127e01095d727db66fc9a82a",
+        "size_in_bytes": 864
+      },
+      {
+        "_path": "Lib/site-packages/cycler-0.12.1.dist-info/REQUESTED",
+        "path_type": "hardlink",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sha256_in_prefix": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_in_bytes": 0
+      },
+      {
+        "_path": "Lib/site-packages/cycler-0.12.1.dist-info/WHEEL",
+        "path_type": "hardlink",
+        "sha256": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+        "sha256_in_prefix": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b",
+        "size_in_bytes": 91
+      },
+      {
+        "_path": "Lib/site-packages/cycler-0.12.1.dist-info/direct_url.json",
+        "path_type": "hardlink",
+        "sha256": "d3e9b73f7078c276a3fe6929cbf703bc98962834474c210d4582052719537235",
+        "sha256_in_prefix": "d3e9b73f7078c276a3fe6929cbf703bc98962834474c210d4582052719537235",
+        "size_in_bytes": 96
+      },
+      {
+        "_path": "Lib/site-packages/cycler-0.12.1.dist-info/licenses/LICENSE",
+        "path_type": "hardlink",
+        "sha256": "f1218143d766da3fea66f13396b7f15df46a83303f29bf96ba6e98eb4d42f408",
+        "sha256_in_prefix": "f1218143d766da3fea66f13396b7f15df46a83303f29bf96ba6e98eb4d42f408",
+        "size_in_bytes": 1497
+      },
+      {
+        "_path": "Lib/site-packages/cycler-0.12.1.dist-info/top_level.txt",
+        "path_type": "hardlink",
+        "sha256": "0fc05554374001e94b6f614e133ee50e973af802f6d7294a3eb321b46eb2cf21",
+        "sha256_in_prefix": "0fc05554374001e94b6f614e133ee50e973af802f6d7294a3eb321b46eb2cf21",
+        "size_in_bytes": 7
+      },
+      {
+        "_path": "Lib/site-packages/cycler/__init__.py",
+        "path_type": "hardlink",
+        "sha256": "d4975182fe59cf1a3e5b57afec1fcb5aabb2b163fa2d91fa08793f08eb486971",
+        "sha256_in_prefix": "d4975182fe59cf1a3e5b57afec1fcb5aabb2b163fa2d91fa08793f08eb486971",
+        "size_in_bytes": 16709
+      },
+      {
+        "_path": "Lib/site-packages/cycler/__pycache__/__init__.cpython-311.pyc",
+        "path_type": "hardlink",
+        "sha256": "393e1dee21d24c631f072fce80256e4b8ef176a0d23b84cf07eb1cd0b5d6ff62",
+        "sha256_in_prefix": "393e1dee21d24c631f072fce80256e4b8ef176a0d23b84cf07eb1cd0b5d6ff62",
+        "size_in_bytes": 25597
+      },
+      {
+        "_path": "Lib/site-packages/cycler/py.typed",
+        "path_type": "hardlink",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sha256_in_prefix": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_in_bytes": 0
+      }
+    ],
+    "paths_version": 1
+  },
+  "requested_spec": "None",
+  "sha256": "b43776e86627001c69f967769176419f5435d6ce82f633717633ba171a14f0b7",
+  "size": 19885,
+  "subdir": "win-64",
+  "timestamp": 1766068095684,
+  "url": "https://repo.anaconda.com/pkgs/main/win-64/cycler-0.12.1-py311haa95532_0.conda",
+  "version": "0.12.1"
+}

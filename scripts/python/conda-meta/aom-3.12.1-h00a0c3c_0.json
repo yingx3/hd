@@ -1,0 +1,167 @@
+{
+  "build": "h00a0c3c_0",
+  "build_number": 0,
+  "channel": "https://repo.anaconda.com/pkgs/main/win-64",
+  "constrains": [],
+  "depends": [
+    "ucrt >=10.0.20348.0",
+    "vc >=14.2,<15",
+    "vc14_runtime >=14.29.30133"
+  ],
+  "extracted_package_dir": "C:\\Users\\32838\\.conda\\pkgs\\aom-3.12.1-h00a0c3c_0",
+  "files": [
+    "Library/bin/aom.dll",
+    "Library/bin/aomdec.exe",
+    "Library/bin/aomenc.exe",
+    "Library/include/aom/aom.h",
+    "Library/include/aom/aom_codec.h",
+    "Library/include/aom/aom_decoder.h",
+    "Library/include/aom/aom_encoder.h",
+    "Library/include/aom/aom_external_partition.h",
+    "Library/include/aom/aom_frame_buffer.h",
+    "Library/include/aom/aom_image.h",
+    "Library/include/aom/aom_integer.h",
+    "Library/include/aom/aomcx.h",
+    "Library/include/aom/aomdx.h",
+    "Library/lib/aom.lib",
+    "Library/lib/aom_dll.lib",
+    "Library/lib/pkgconfig/aom.pc"
+  ],
+  "fn": "aom-3.12.1-h00a0c3c_0.conda",
+  "legacy_bz2_md5": "63f14c1b98dd27cddab5824c45264fe1",
+  "license": "BSD-2-Clause",
+  "license_family": "BSD",
+  "link": {
+    "source": "C:\\Users\\32838\\.conda\\pkgs\\aom-3.12.1-h00a0c3c_0",
+    "type": 1
+  },
+  "md5": "d5ed6d55279b36ee4b3088f80843b359",
+  "name": "aom",
+  "package_tarball_full_path": "C:\\Users\\32838\\.conda\\pkgs\\aom-3.12.1-h00a0c3c_0.conda",
+  "paths_data": {
+    "paths": [
+      {
+        "_path": "Library/bin/aom.dll",
+        "path_type": "hardlink",
+        "sha256": "ebe448a75c98d0c3220ff32094105f5e5748d1658a9ced4c24259fd820231705",
+        "sha256_in_prefix": "ebe448a75c98d0c3220ff32094105f5e5748d1658a9ced4c24259fd820231705",
+        "size_in_bytes": 9724232
+      },
+      {
+        "_path": "Library/bin/aomdec.exe",
+        "path_type": "hardlink",
+        "sha256": "8faa062788f69e09b7703ae48ad0c71020abb65a62e962284e42bb60b2e9e7d9",
+        "sha256_in_prefix": "8faa062788f69e09b7703ae48ad0c71020abb65a62e962284e42bb60b2e9e7d9",
+        "size_in_bytes": 163656
+      },
+      {
+        "_path": "Library/bin/aomenc.exe",
+        "path_type": "hardlink",
+        "sha256": "f6a0a224a0f51b8854394516be48b292066b4cff62c3015c47dcebd04b6d4c10",
+        "sha256_in_prefix": "f6a0a224a0f51b8854394516be48b292066b4cff62c3015c47dcebd04b6d4c10",
+        "size_in_bytes": 207688
+      },
+      {
+        "_path": "Library/include/aom/aom.h",
+        "path_type": "hardlink",
+        "sha256": "b25cc7277ade68ba9c43903c0139b8aad081a301d085f48390439ce6ebe76982",
+        "sha256_in_prefix": "b25cc7277ade68ba9c43903c0139b8aad081a301d085f48390439ce6ebe76982",
+        "size_in_bytes": 3874
+      },
+      {
+        "_path": "Library/include/aom/aom_codec.h",
+        "path_type": "hardlink",
+        "sha256": "ace046167692a42a258a9f017aa78dde723d2a40d00de70e4af207fc517de22c",
+        "sha256_in_prefix": "ace046167692a42a258a9f017aa78dde723d2a40d00de70e4af207fc517de22c",
+        "size_in_bytes": 21330
+      },
+      {
+        "_path": "Library/include/aom/aom_decoder.h",
+        "path_type": "hardlink",
+        "sha256": "b1d8724ebe05cac3d42b1f60b50ccf4a220e7ab9ef34434db5834943f92fe564",
+        "sha256_in_prefix": "b1d8724ebe05cac3d42b1f60b50ccf4a220e7ab9ef34434db5834943f92fe564",
+        "size_in_bytes": 10452
+      },
+      {
+        "_path": "Library/include/aom/aom_encoder.h",
+        "path_type": "hardlink",
+        "sha256": "51b50bc72575b66d535bf3b6bc0987c5fda39dd5e5f2f4109f24be5067cd7de1",
+        "sha256_in_prefix": "51b50bc72575b66d535bf3b6bc0987c5fda39dd5e5f2f4109f24be5067cd7de1",
+        "size_in_bytes": 41974
+      },
+      {
+        "_path": "Library/include/aom/aom_external_partition.h",
+        "path_type": "hardlink",
+        "sha256": "72ca704022a62957beb25026d919a639cfdf5049fe3fae813980691d529bdc5f",
+        "sha256_in_prefix": "72ca704022a62957beb25026d919a639cfdf5049fe3fae813980691d529bdc5f",
+        "size_in_bytes": 17889
+      },
+      {
+        "_path": "Library/include/aom/aom_frame_buffer.h",
+        "path_type": "hardlink",
+        "sha256": "33393bcc818b2d0c22526515b875d14a74417d29b4e8580b760469c265007ee2",
+        "sha256_in_prefix": "33393bcc818b2d0c22526515b875d14a74417d29b4e8580b760469c265007ee2",
+        "size_in_bytes": 3327
+      },
+      {
+        "_path": "Library/include/aom/aom_image.h",
+        "path_type": "hardlink",
+        "sha256": "e92d0eacee208ae523bf686ae2dc0c633b469a6fd48b10893cfcad413a543486",
+        "sha256_in_prefix": "e92d0eacee208ae523bf686ae2dc0c633b469a6fd48b10893cfcad413a543486",
+        "size_in_bytes": 20142
+      },
+      {
+        "_path": "Library/include/aom/aom_integer.h",
+        "path_type": "hardlink",
+        "sha256": "9af5a90e9cfd1290e2b763647efc7abdb1ad3113382986fcfa300f23176bb106",
+        "sha256_in_prefix": "9af5a90e9cfd1290e2b763647efc7abdb1ad3113382986fcfa300f23176bb106",
+        "size_in_bytes": 2166
+      },
+      {
+        "_path": "Library/include/aom/aomcx.h",
+        "path_type": "hardlink",
+        "sha256": "c3c977295f3fd0f3cfe455ba47cccd9f1680c8d2787633eff7bde29d34457c3f",
+        "sha256_in_prefix": "c3c977295f3fd0f3cfe455ba47cccd9f1680c8d2787633eff7bde29d34457c3f",
+        "size_in_bytes": 74921
+      },
+      {
+        "_path": "Library/include/aom/aomdx.h",
+        "path_type": "hardlink",
+        "sha256": "f81c9d35a3e782751243a1284c96b345eb297e813b2cc7221a0107c0fff203d7",
+        "sha256_in_prefix": "f81c9d35a3e782751243a1284c96b345eb297e813b2cc7221a0107c0fff203d7",
+        "size_in_bytes": 19469
+      },
+      {
+        "_path": "Library/lib/aom.lib",
+        "path_type": "hardlink",
+        "sha256": "a3c4d1559d05c239c835d1bb72e41bc17e63c556ecfac06fb5f68a581f608b31",
+        "sha256_in_prefix": "a3c4d1559d05c239c835d1bb72e41bc17e63c556ecfac06fb5f68a581f608b31",
+        "size_in_bytes": 19375288
+      },
+      {
+        "_path": "Library/lib/aom_dll.lib",
+        "path_type": "hardlink",
+        "sha256": "857696d2c53680c5af78a816f725b3384451a03d4deb76890be919e92818e001",
+        "sha256_in_prefix": "857696d2c53680c5af78a816f725b3384451a03d4deb76890be919e92818e001",
+        "size_in_bytes": 13662
+      },
+      {
+        "_path": "Library/lib/pkgconfig/aom.pc",
+        "file_mode": "text",
+        "path_type": "hardlink",
+        "prefix_placeholder": "C:/b/abs_ea7u4cal40/croot/aom_1754917438903/_h_env",
+        "sha256": "2eb7fc975b629047df5b334688db3710b7581324a042bba7a9eec1c4f4fb8704",
+        "sha256_in_prefix": "70d2c69db2a859327c7df0850bdaa836a4f3dc032e59d46450af581a136ec1c7",
+        "size_in_bytes": 352
+      }
+    ],
+    "paths_version": 1
+  },
+  "requested_spec": "None",
+  "sha256": "e96fd511eb0c3fb67aa6ad24b2a14e730a92b3c6cfb776a73b728cd912dd9953",
+  "size": 5818487,
+  "subdir": "win-64",
+  "timestamp": 1754917837280,
+  "url": "https://repo.anaconda.com/pkgs/main/win-64/aom-3.12.1-h00a0c3c_0.conda",
+  "version": "3.12.1"
+}
