@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -72,6 +73,12 @@ public class AdminUserController {
 
     @Value("${app.transformer-script:E:/Projects/ZHLXT/算法/dzd/scripts/transformer1d.py}")
     private String transformerScript;
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    @Value("${app.process-timeout:600}")
+    private long processTimeoutSeconds;
+
     @PostMapping("/fx")
     public String fxmodelparam(@RequestBody FormData formData) throws  Exception {
         // 获取表单数据
@@ -129,19 +136,13 @@ public class AdminUserController {
         // 将 Set 转换为 List
         List<String> list = new ArrayList<>(p_name);
 //        System.out.println(list.get(0));
-        if (nums_n.size()==1){
-            return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称1:"+list.get(0);
-        }else if(nums_n.size()==2){
-            return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称1:"+list.get(0)+",图片名称2:"+list.get(1);
-        }else if(nums_n.size()==3){
-            return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称1:"+list.get(0)+",图片名称2:"+list.get(1)+",图片名称3:"+list.get(2);
-        }else if(nums_n.size()==4){
-            return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称1:"+list.get(0)+",图片名称2:"+list.get(1)+",图片名称3:"+list.get(2)+",图片名称4:"+list.get(3);
-        }else if(nums_n.size()==5){
-            return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称1:"+list.get(0)+",图片名称2:"+list.get(1)+",图片名称3:"+list.get(2)+",图片名称4:"+list.get(3)+",图片名称5:"+list.get(4);
-        }else {
-            return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称1:"+list.get(0)+",图片名称2:"+list.get(1)+",图片名称3:"+list.get(2)+",图片名称4:"+list.get(3)+",图片名称5:"+list.get(4)+",图片名称6:"+list.get(5);
+        // 构建返回结果（保持前端正则解析兼容：左下经度/纬度 + 图片名称N）
+        StringBuilder resp = new StringBuilder();
+        resp.append("左下经度:97.50895326289057,左下纬度:31.04328676214011,右上经度:97.6075307037595,右上纬度:31.17971326461056");
+        for (int idx = 0; idx < list.size(); idx++) {
+            resp.append(",图片名称").append(idx + 1).append(":").append(list.get(idx));
         }
+        return resp.toString();
 //        return "左下经度:" + z[1] + ", 左下纬度:" + z[0] + ", 右上经度:" + z[3] + ", 右上纬度:" + z[2]+",图片名称："+z[4];
 //        return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称:"+"dangerLevel_20250121_161228_914.png";
     }
@@ -189,21 +190,31 @@ public class AdminUserController {
 
     // 检查单个 PID 是否正在运行
     public static boolean isPidRunning(String pid) {
+        Process process = null;
         try {
-            // 调用 tasklist 命令
-            Process process = Runtime.getRuntime().exec("tasklist /FI \"PID eq " + pid + "\"");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.contains(pid)) {
-                    return true; // PID 在运行
+            process = Runtime.getRuntime().exec("tasklist /FI \"PID eq " + pid + "\"");
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), Charset.forName("GBK")))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.contains(pid)) {
+                        return true;
+                    }
                 }
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            System.err.println("检查 PID 失败: " + e.getMessage());
+        } finally {
+            if (process != null) {
+                try {
+                    process.destroy();
+                } catch (Exception ignored) {
+                }
+            }
         }
-        return false; // PID 不在运行
+        return false;
     }
+
     //生成风险txt文件
     public static String TRIGRS(String time,String rsl,String depth,String diffus,String ksat,String zmax,String color,int nums) throws IOException, InterruptedException {
 
@@ -503,7 +514,7 @@ public class AdminUserController {
             double[] destPts = new double[8];
             transformToWGS84.transform(srcPts, 0, destPts, 0, 4);
             // 创建图像
-            BufferedImage image = new BufferedImage((int) (width * cellSize), (int) (height * cellSize), BufferedImage.TYPE_INT_ARGB);
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g2d = image.createGraphics();
             int row = 0;
             while ((line = br.readLine()) != null && row < height) {
@@ -520,7 +531,7 @@ public class AdminUserController {
                             Color fillColor = getColorFromValue(value, colorScheme);
                             g2d.setColor(fillColor);
                         }
-                        g2d.fillRect((int) (col * cellSize), (int) (row * cellSize), (int) cellSize, (int) cellSize);
+                        g2d.fillRect(col, row, 1, 1);
                     } catch (NumberFormatException e) {
                         System.err.println("无效的数字: " + valueStr);
                     }
@@ -608,67 +619,35 @@ public class AdminUserController {
     @PostMapping("/GBM")
     public ResponseEntity<?> runInference(@RequestBody Map<String, Object> body) {
         try {
-            //  获取文件数组
+            @SuppressWarnings("unchecked")
             List<Map<String, Object>> files = (List<Map<String, Object>>) body.get("files");
-            // 1. 取出 form（注意：它是 Map，不是 List！）
             Map<String, Object> form = (Map<String, Object>) body.get("form");
+            String jsonStr = OBJECT_MAPPER.writeValueAsString(form);
 
-// 2. 把 Map 转成 JSON 字符串（关键步骤！）
-            ObjectMapper objectMapper = new ObjectMapper();
-            String jsonStr = objectMapper.writeValueAsString(form);
-
-            System.out.print(jsonStr);
-//            {files=[{originalFileName=waternet_new1.prj, savedPath=..\..\src\assets\input\waternet_new1.prj}], form={aspect=150, curvature=0.002, fault_distance=30000, ndvi=0.001, rainfall=700, relief_amplitude=250}}
             if (files == null || files.isEmpty()) {
                 return ResponseEntity.badRequest().body("Missing 'files'");
             }
 
-            //  从第一条文件获取所在目录（假设同一 shapefile 各部件都在同一目录）
             String firstPath = (String) files.get(0).get("savedPath");
             if (firstPath == null) {
                 return ResponseEntity.badRequest().body("Invalid file path");
             }
-
             File firstFile = new File(firstPath);
             String folder = firstFile.getParent();
             String shpfile = firstFile.getName();
 
-            System.out.println(firstPath);
-
-            //  调用 Python 脚本
-//            String pythonDir = "./scripts/python";
-//            // 生成 干净的、解析好的绝对路径（没有 ..）
-//            File file = new File(pythonDir).getCanonicalFile();
-//            String realPath = file.getAbsolutePath();
-//            // 打印最终真实路径
-//            System.out.println("✅ 解析后真实路径：" + realPath);
-            ProcessBuilder pb = new ProcessBuilder(pythonExe, inferenceScript, shpfile, jsonStr);
-            //将错误信息和正常输出信息合并到一起
-            pb.redirectErrorStream(true);
-
-            Process process = pb.start();
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
-//            System.out.print(reader);
-            String line;
-            String outputShpPath = null;
-            while ((line = reader.readLine()) != null) {
-                System.out.println("[Python] " + line);
-                if (line.startsWith("OUTPUT_PATH=")) {
-                    outputShpPath = line.substring("OUTPUT_PATH=".length()).trim();
-                }
-            }
-
-            int exitCode = process.waitFor();
-            if (exitCode != 0) {
+            ProcessResult pr = runProcess(
+                    Arrays.asList(pythonExe, inferenceScript, shpfile, jsonStr),
+                    null, processTimeoutSeconds, "[Python] ", StandardCharsets.UTF_8);
+            if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("Python script failed");
             }
-
-            if (outputShpPath == null) {
+            String outputShpPath = extractSentinel(pr.output, "OUTPUT_PATH=");
+            if (outputShpPath.isEmpty()) {
                 return ResponseEntity.internalServerError().body("No output shapefile path from Python");
             }
 
-            //  Shapefile → GeoJSON
+            //  Shapefile to GeoJSON
             System.setProperty("org.geotools.shapefile.charset", "GBK");
             File shpFile = new File(outputShpPath);
             ShapefileDataStore store = new ShapefileDataStore(shpFile.toURI().toURL());
@@ -694,7 +673,6 @@ public class AdminUserController {
             resp.put("status", "ok");
             resp.put("geojson", geojson);
             resp.put("folder", folder);
-//            System.out.print(resp);
             return ResponseEntity.ok(resp);
 
         } catch (Exception e) {
@@ -703,30 +681,27 @@ public class AdminUserController {
         }
     }
 
+
     @PostMapping("/seismic")
     public ResponseEntity<?> processSeismic(@RequestBody Map<String, Object> body) {
         try {
-            // 获取文件路径（从前端传递）
             @SuppressWarnings("unchecked")
             Map<String, String> fileInfo = (Map<String, String>) body.get("file");
             if (fileInfo == null || fileInfo.get("savedPath") == null) {
                 return ResponseEntity.badRequest().body("Missing 'file.savedPath'");
             }
-//System.out.println(fileInfo);
             String excelPath = fileInfo.get("savedPath");
             File excelFile = new File(excelPath);
             if (!excelFile.exists()) {
                 return ResponseEntity.badRequest().body("Excel file not found: " + excelPath);
             }
 
-            // 获取参数（从前端传递）
             @SuppressWarnings("unchecked")
             Map<String, Object> params = (Map<String, Object>) body.get("params");
             if (params == null) {
                 params = new HashMap<>();
             }
 
-            // 提取参数值，设置默认值
             double threshold = params.containsKey("threshold") ? Double.parseDouble(params.get("threshold").toString()) : 2.5;
             int short_window = params.containsKey("short_window") ? Integer.parseInt(params.get("short_window").toString()) : 30;
             int long_window = params.containsKey("long_window") ? Integer.parseInt(params.get("long_window").toString()) : 240;
@@ -734,49 +709,30 @@ public class AdminUserController {
             int total_duration = params.containsKey("total_duration") ? Integer.parseInt(params.get("total_duration").toString()) : 60;
             int sampling_rate = params.containsKey("sampling_rate") ? Integer.parseInt(params.get("sampling_rate").toString()) : 100;
 
-            // 调用Python脚本
             String pythonSeismicScript = projectRoot + "/suanfa/seismic/seismic.py";
-            ProcessBuilder pb = new ProcessBuilder(
-                    pythonExe, pythonSeismicScript, excelPath,
-                    String.valueOf(threshold),
-                    String.valueOf(short_window),
-                    String.valueOf(long_window),
-                    String.valueOf(segment_duration),
-                    String.valueOf(total_duration),
-                    String.valueOf(sampling_rate)
-            );  // 传递文件路径和参数作为参数
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
-            String line;
-            String outputJson = "";
-            String echarts_data ="";
-            while ((line = reader.readLine()) != null) {
-                System.out.println("[Python] " + line);
-                if (line.startsWith("RESULT_JSON=")) {
-                    outputJson = line.substring("RESULT_JSON=".length()).trim();
-                }
-                if(line.startsWith("echarts=")){
-                    echarts_data=line.substring("echarts=".length()).trim();
-                }
-            }
-            int exitCode = process.waitFor();
-            if (exitCode != 0) {
+            ProcessResult pr = runProcess(
+                    Arrays.asList(pythonExe, pythonSeismicScript, excelPath,
+                            String.valueOf(threshold),
+                            String.valueOf(short_window),
+                            String.valueOf(long_window),
+                            String.valueOf(segment_duration),
+                            String.valueOf(total_duration),
+                            String.valueOf(sampling_rate)),
+                    null, processTimeoutSeconds, "[Python] ", StandardCharsets.UTF_8);
+            if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("Python script failed");
             }
 
+            String outputJson = extractSentinel(pr.output, "RESULT_JSON=");
+            String echarts_data = extractSentinel(pr.output, "echarts=");
             if (outputJson.isEmpty()) {
                 return ResponseEntity.internalServerError().body("No result from Python");
             }
 
-            // 解析JSON（简单手动解析，或用Jackson）
-                boolean detected = outputJson.contains("\"detected\": true");
-
-
+            boolean detected = outputJson.contains("\"detected\": true");
             Map<String, Object> resp = new HashMap<>();
             resp.put("detected", detected);
-            resp.put("echarts_data",echarts_data);
+            resp.put("echarts_data", echarts_data);
             return ResponseEntity.ok(resp);
 
         } catch (Exception e) {
@@ -784,6 +740,7 @@ public class AdminUserController {
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
     }
+
 
     @PostMapping("/SDP_Start")
     public ResponseEntity<?> processSDPStart(@RequestBody Map<String, Object> body) {
@@ -797,28 +754,16 @@ public class AdminUserController {
         String tempPattern = body.containsKey("temp_pattern") ? body.get("temp_pattern").toString() : "temp_%d.tif";
 
         try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    pythonExe, pythonScript,
-                    "--rain_path", rainPath,
-                    "--temp_path", tempPath,
-                    "--output_dir", outputDir,
-                    "--ice_content", String.valueOf(iceContent),
-                    "--temp_pattern", tempPattern
-            );
-            pb.directory(new File(projectRoot));
-            pb.redirectErrorStream(true);
-
-            Process process = pb.start();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), "GBK"))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    System.out.println("SDP Python: " + line);
-                }
-            }
-            int exitCode = process.waitFor();
-            System.out.println("SDP Python 进程结束，退出码：" + exitCode);
-            if (exitCode != 0) {
-                return ResponseEntity.internalServerError().body("run.py 执行失败，退出码：" + exitCode);
+            ProcessResult pr = runProcess(
+                    Arrays.asList(pythonExe, pythonScript,
+                            "--rain_path", rainPath,
+                            "--temp_path", tempPath,
+                            "--output_dir", outputDir,
+                            "--ice_content", String.valueOf(iceContent),
+                            "--temp_pattern", tempPattern),
+                    new File(projectRoot), processTimeoutSeconds, "SDP Python: ", Charset.forName("GBK"));
+            if (pr.exitCode != 0) {
+                return ResponseEntity.internalServerError().body("run.py 执行失败，退出码：" + pr.exitCode);
             }
 
             String tifPath = outputDir + "/ZMAX_final.tif";
@@ -827,27 +772,18 @@ public class AdminUserController {
                 return ResponseEntity.internalServerError().body("输出文件不存在: " + tifPath);
             }
 
-            ProcessBuilder pb2 = new ProcessBuilder(pythonExe, convertScript, tifPath);
-            pb2.directory(new File(projectRoot));
-            pb2.redirectErrorStream(true);
-
-            Process process2 = pb2.start();
-            String jsonResult = "";
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process2.getInputStream(), "UTF-8"))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    System.out.println("Convert: " + line);
-                    if (line.startsWith("RESULT_JSON=")) {
-                        jsonResult = line.substring("RESULT_JSON=".length()).trim();
-                    }
-                }
+            ProcessResult pr2 = runProcess(
+                    Arrays.asList(pythonExe, convertScript, tifPath),
+                    new File(projectRoot), processTimeoutSeconds, "Convert: ", StandardCharsets.UTF_8);
+            if (pr2.exitCode != 0) {
+                return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败");
             }
-            int exitCode2 = process2.waitFor();
-            if (exitCode2 != 0 || jsonResult.isEmpty()) {
+            String jsonResult = extractSentinel(pr2.output, "RESULT_JSON=");
+            if (jsonResult.isEmpty()) {
                 return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败");
             }
 
-            Map<String, Object> rawResult = new ObjectMapper().readValue(jsonResult, new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> rawResult = OBJECT_MAPPER.readValue(jsonResult, new TypeReference<Map<String, Object>>() {});
             boolean isProjected = Boolean.TRUE.equals(rawResult.get("isProjected"));
             double west  = Double.parseDouble(rawResult.get("west").toString());
             double south = Double.parseDouble(rawResult.get("south").toString());
@@ -892,6 +828,7 @@ public class AdminUserController {
         }
     }
 
+
     @PostMapping("/seismic_dl")
     public ResponseEntity<?> processSeismicDL(@RequestBody Map<String, Object> body) {
         try {
@@ -905,31 +842,85 @@ public class AdminUserController {
                 return ResponseEntity.badRequest().body("CSV not found: " + csvPath);
             }
 
-            ProcessBuilder pb = new ProcessBuilder(condaPythonExe, transformerScript, csvPath);
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-
-            BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
-            String line, outputJson = "";
-            while ((line = reader.readLine()) != null) {
-                System.out.println("[DL] " + line);
-                if (line.startsWith("RESULT_JSON=")) {
-                    outputJson = line.substring("RESULT_JSON=".length()).trim();
-                }
+            ProcessResult pr = runProcess(
+                    Arrays.asList(condaPythonExe, transformerScript, csvPath),
+                    null, processTimeoutSeconds, "[DL] ", StandardCharsets.UTF_8);
+            if (pr.exitCode != 0) {
+                return ResponseEntity.internalServerError().body("DL Python failed, exit: " + pr.exitCode);
             }
-            int exitCode = process.waitFor();
-            if (exitCode != 0 || outputJson.isEmpty()) {
-                return ResponseEntity.internalServerError().body("DL Python failed, exit: " + exitCode);
+            String outputJson = extractSentinel(pr.output, "RESULT_JSON=");
+            if (outputJson.isEmpty()) {
+                return ResponseEntity.internalServerError().body("DL Python 未返回 RESULT_JSON");
             }
             return ResponseEntity.ok(
-                new ObjectMapper().readValue(outputJson, new TypeReference<Map<String, Object>>() {})
+                    OBJECT_MAPPER.readValue(outputJson, new TypeReference<Map<String, Object>>() {})
             );
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
     }
 
+
+
+    private static final class ProcessResult {
+        final int exitCode;
+        final String output;
+
+        ProcessResult(int exitCode, String output) {
+            this.exitCode = exitCode;
+            this.output = output;
+        }
+    }
+
+    /**
+     * 执行外部进程：合并 stdout/stderr，带超时控制，避免模型进程挂起阻塞请求。
+     */
+    private ProcessResult runProcess(List<String> command, File workDir, long timeoutSeconds,
+                                     String logPrefix, Charset charset)
+            throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        if (workDir != null) {
+            pb.directory(workDir);
+        }
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        StringBuilder out = new StringBuilder();
+        String prefix = logPrefix == null ? "" : logPrefix;
+        Thread reader = new Thread(() -> {
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), charset))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    out.append(line).append(System.lineSeparator());
+                    if (!prefix.isEmpty()) {
+                        System.out.println(prefix + line);
+                    }
+                }
+            } catch (IOException e) {
+                System.err.println("读取进程输出失败: " + e.getMessage());
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+
+        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        if (!finished) {
+            System.err.println("进程超时(" + timeoutSeconds + "s)，强制终止: " + command);
+            process.destroyForcibly();
+            process.waitFor();
+        }
+        reader.join(2000);
+        return new ProcessResult(process.exitValue(), out.toString());
+    }
+
+    private static String extractSentinel(String output, String prefix) {
+        for (String line : output.split("\\R")) {
+            if (line.startsWith(prefix)) {
+                return line.substring(prefix.length()).trim();
+            }
+        }
+        return "";
+    }
+
 }
-
-
