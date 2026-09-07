@@ -10,3 +10,9 @@ spring:
     pathmatch:
       matching-strategy: ant_path_matcher
 
+# 部署时可覆盖以下配置:
+# app:
+#   project-root: ../backend                    # 项目根目录（默认当前绝对路径）
+#   static-dir: ../nginx/html                   # PNG输出目录
+#   python-exe: python/python.exe               # 嵌入式Python路径
+#   conda-python-exe: D:/application/miniconda3/envs/geocompy/python.exe  # DL模型Python

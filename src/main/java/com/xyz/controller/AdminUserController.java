@@ -3,6 +3,7 @@ package com.xyz.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.Data;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
 
@@ -11,8 +12,6 @@ import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,17 +21,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.ArrayList;
-import java.util.Map;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.Set;
-import java.util.HashSet;
 
 import org.geotools.referencing.CRS;
 import org.geotools.data.FileDataStore;
@@ -55,6 +49,29 @@ import org.opengis.feature.simple.SimpleFeatureType;
 @RestController
 @RequestMapping("/admin/user")
 public class AdminUserController {
+
+    private static String staticDir = "E:\\softwares\\nginx-1.26.2\\nginx-1.26.2\\html";
+
+    @Value("${app.static-dir:E:\\softwares\\nginx-1.26.2\\nginx-1.26.2\\html}")
+    public void setStaticDir(String dir) {
+        staticDir = dir;
+    }
+
+    // ---- Python 脚本路径配置（开发环境用绝对路径，部署时在 application.yml 中覆盖）----
+    @Value("${app.project-root:E:/Projects/ZHLXT/backend/hd-mao_0322}")
+    private String projectRoot;
+
+    @Value("${app.python-exe:E:/Projects/ZHLXT/backend/hd-mao_0322/scripts/python/python.exe}")
+    private String pythonExe;
+
+    @Value("${app.conda-python-exe:D:/application/miniconda3/envs/geocompy/python.exe}")
+    private String condaPythonExe;
+
+    @Value("${app.inference-script:E:/Projects/ZHLXT/demo/src/assets/src/inference.py}")
+    private String inferenceScript;
+
+    @Value("${app.transformer-script:E:/Projects/ZHLXT/算法/dzd/scripts/transformer1d.py}")
+    private String transformerScript;
     @PostMapping("/fx")
     public String fxmodelparam(@RequestBody FormData formData) throws  Exception {
         // 获取表单数据
@@ -128,47 +145,11 @@ public class AdminUserController {
 //        return "左下经度:" + z[1] + ", 左下纬度:" + z[0] + ", 右上经度:" + z[3] + ", 右上纬度:" + z[2]+",图片名称："+z[4];
 //        return "左下经度:" +  "97.50895326289057"+ ",左下纬度:" + "31.04328676214011" + ",右上经度:" + "97.6075307037595" + ",右上纬度:" + "31.17971326461056"+",图片名称:"+"dangerLevel_20250121_161228_914.png";
     }
-    @PostMapping("/yj")
-    public String  yjmodelparam(@RequestBody FormData1 formData1)throws Exception{
-        System.out.println(formData1);
-        System.out.println("接收数据成功！");
-        //启动ubuntu20.04
-        // 启动 Ubuntu 系统命令，这里以启动 GNOME 终端为例
-        try {
-            // 创建命令：启动 WSL、切换到 /home/syl 并执行 start1.sh
-            String command = "cmd /c start wsl -d Ubuntu-20.04 -- bash -c \"cd /home/syl && sh start1.sh && exec bash\"";
-
-            // 启动 WSL 控制台并执行脚本
-            Process process = Runtime.getRuntime().exec(command);
-
-            // 获取命令的输出
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                System.out.println(line);
-            }
-
-            // 获取错误输出
-            BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
-            String errorLine;
-            while ((errorLine = errorReader.readLine()) != null) {
-                System.err.println(errorLine);
-            }
-
-            // 等待命令执行完毕
-            int exitCode = process.waitFor();
-            if (exitCode == 0) {
-                System.out.println("WSL 控制台启动成功并执行了 start1.sh 脚本！");
-            } else {
-                System.out.println("启动失败，退出代码：" + exitCode);
-            }
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            System.out.println("启动命令失败：" + e.getMessage());
-        }
-        return "成功执行";
-    }
+    // [已移除] /yj 端点 — 依赖 WSL Ubuntu，部署环境中不可用
+    // @PostMapping("/yj")
+    // public String  yjmodelparam(@RequestBody FormData1 formData1)throws Exception{
+    //     ... WSL 调用已移除 ...
+    // }
 //自定义formdata类型
     @Data
     public static class  FormData {
@@ -560,7 +541,7 @@ public class AdminUserController {
             }else{
                 uniqueFileName= "redGradient_" + timestamp + ".png";
             }
-            ImageIO.write(image, "png", new java.io.File("E:\\softwares\\nginx-1.26.2\\nginx-1.26.2\\html\\"+uniqueFileName));
+            ImageIO.write(image, "png", new java.io.File(staticDir, uniqueFileName));
             // 删除临时文件
             Files.deleteIfExists(inputFile);
 //            System.out.println("临时文件已销毁。");
@@ -661,10 +642,7 @@ public class AdminUserController {
 //            String realPath = file.getAbsolutePath();
 //            // 打印最终真实路径
 //            System.out.println("✅ 解析后真实路径：" + realPath);
-            String pythonExe = "E:/Projects/ZHLXT/backend/hd-mao_0322/scripts/python/python.exe";
-            String pythonScript = "E:/Projects/ZHLXT/demo/src/assets/src/inference.py";
-
-            ProcessBuilder pb = new ProcessBuilder(pythonExe, pythonScript, shpfile, jsonStr);
+            ProcessBuilder pb = new ProcessBuilder(pythonExe, inferenceScript, shpfile, jsonStr);
             //将错误信息和正常输出信息合并到一起
             pb.redirectErrorStream(true);
 
@@ -699,8 +677,11 @@ public class AdminUserController {
             SimpleFeatureCollection collection = featureSource.getFeatures();
 
             CoordinateReferenceSystem sourceCRS = featureSource.getSchema().getCoordinateReferenceSystem();
+            if (sourceCRS == null) {
+                sourceCRS = CRS.decode("EPSG:32646", true);
+            }
             CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
-            if (sourceCRS != null && !CRS.equalsIgnoreMetadata(sourceCRS, targetCRS)) {
+            if (!CRS.equalsIgnoreMetadata(sourceCRS, targetCRS)) {
                 collection = new ReprojectingFeatureCollection(collection, targetCRS);
             }
 
@@ -754,10 +735,9 @@ public class AdminUserController {
             int sampling_rate = params.containsKey("sampling_rate") ? Integer.parseInt(params.get("sampling_rate").toString()) : 100;
 
             // 调用Python脚本
-            String pythonExe =  "./scripts/python/python.exe";  // 调整为您的Python环境
-            String pythonScript = "suanfa\\seismic\\seismic.py";  // 修改后的Python文件路径
+            String pythonSeismicScript = projectRoot + "/suanfa/seismic/seismic.py";
             ProcessBuilder pb = new ProcessBuilder(
-                    pythonExe, pythonScript, excelPath,
+                    pythonExe, pythonSeismicScript, excelPath,
                     String.valueOf(threshold),
                     String.valueOf(short_window),
                     String.valueOf(long_window),
@@ -807,8 +787,6 @@ public class AdminUserController {
 
     @PostMapping("/SDP_Start")
     public ResponseEntity<?> processSDPStart(@RequestBody Map<String, Object> body) {
-        String projectRoot = "E:/Projects/ZHLXT/backend/hd-mao_0322";
-        String pythonExe = projectRoot + "/scripts/python/python.exe";
         String pythonScript = projectRoot + "/suanfa/SDP_Start/python/run.py";
         String convertScript = projectRoot + "/suanfa/SDP_Start/python/tif_to_json.py";
 
@@ -910,6 +888,44 @@ public class AdminUserController {
 
         } catch (Exception e) {
             e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/seismic_dl")
+    public ResponseEntity<?> processSeismicDL(@RequestBody Map<String, Object> body) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, String> fileInfo = (Map<String, String>) body.get("file");
+            if (fileInfo == null || fileInfo.get("savedPath") == null) {
+                return ResponseEntity.badRequest().body("Missing 'file.savedPath'");
+            }
+            String csvPath = fileInfo.get("savedPath");
+            if (!new java.io.File(csvPath).exists()) {
+                return ResponseEntity.badRequest().body("CSV not found: " + csvPath);
+            }
+
+            ProcessBuilder pb = new ProcessBuilder(condaPythonExe, transformerScript, csvPath);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+            String line, outputJson = "";
+            while ((line = reader.readLine()) != null) {
+                System.out.println("[DL] " + line);
+                if (line.startsWith("RESULT_JSON=")) {
+                    outputJson = line.substring("RESULT_JSON=".length()).trim();
+                }
+            }
+            int exitCode = process.waitFor();
+            if (exitCode != 0 || outputJson.isEmpty()) {
+                return ResponseEntity.internalServerError().body("DL Python failed, exit: " + exitCode);
+            }
+            return ResponseEntity.ok(
+                new ObjectMapper().readValue(outputJson, new TypeReference<Map<String, Object>>() {})
+            );
+        } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
     }
