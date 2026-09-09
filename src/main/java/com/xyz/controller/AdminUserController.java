@@ -77,8 +77,11 @@ public class AdminUserController {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    @Value("${app.avaflow.wsl-home:\\\\\\\\wsl.localhost\\Ubuntu-20.04\\home\\wm}")
+    @Value("${app.avaflow.wsl-home://wsl.localhost/Ubuntu-20.04/home/wm}")
     private String avaflowWslHome;
+
+    @Value("${app.avaflow.wsl-linux-home:/home/wm}")
+    private String avaflowWslLinuxHome;
 
     @Value("${app.avaflow.static-dir:D:/practice/nginx-1.24.0/html}")
     private String avaflowStaticDir;
@@ -925,10 +928,9 @@ public class AdminUserController {
             // 2) WSL 执行
             String wslHome = avaflowWslHome.replace("\\\\", "//").replace("\\", "/");
             // UNCs: \wsl.localhost\Ubuntu-20.04\home\wm -> /mnt/... ? 直接用 wsl 内路径约定
-            String linuxHome = toLinuxPath(avaflowWslHome);
             ProcessResult pr = runProcess(
                     Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
-                            "cd " + linuxHome + " && chmod +x start_beta.sh && ./start_beta.sh"),
+                            "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && ./start_beta.sh"),
                     null, processTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
             if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("avaflow 执行失败，退出码：" + pr.exitCode + "\n" + pr.output);
