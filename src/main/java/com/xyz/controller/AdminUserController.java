@@ -803,8 +803,8 @@ public class AdminUserController {
             if (jsonResult.isEmpty()) {
                 return ResponseEntity.internalServerError().body("tif_to_json.py 未返回结果");
             }
-            List<Map<String, Object>> rawFrames =
-                    OBJECT_MAPPER.readValue(jsonResult, new TypeReference<List<Map<String, Object>>>() {});
+            // 兼容批量输出（数组）与旧版单帧输出（对象）
+            List<Map<String, Object>> rawFrames = parseFrameList(jsonResult);
 
             List<Map<String, Object>> frames = new ArrayList<>();
             int n = Math.min(rawFrames.size(), times.size());
@@ -823,6 +823,29 @@ public class AdminUserController {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
+    }
+
+    /**
+     * 解析 tif_to_json.py 的 RESULT_JSON：
+     * 兼容批量输出（JSON 数组）与旧版单帧输出（JSON 对象）。
+     */
+    private List<Map<String, Object>> parseFrameList(String json) throws Exception {
+        Object parsed = OBJECT_MAPPER.readValue(json, Object.class);
+        List<Map<String, Object>> list = new ArrayList<>();
+        if (parsed instanceof List) {
+            for (Object o : (List<?>) parsed) {
+                if (o instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> m = (Map<String, Object>) o;
+                    list.add(m);
+                }
+            }
+        } else if (parsed instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> m = (Map<String, Object>) parsed;
+            list.add(m);
+        }
+        return list;
     }
 
     /** 将 tif_to_json.py 的 RESULT_JSON 转为前端帧（WGS84 边界，兼容投影情况）。 */
