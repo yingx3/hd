@@ -932,7 +932,7 @@ public class AdminUserController {
             // UNCs: \wsl.localhost\Ubuntu-20.04\home\wm -> /mnt/... ? 直接用 wsl 内路径约定
             ProcessResult pr = runProcess(
                     Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
-                            "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && grass --exec " + avaflowGrassGisdbase + " bash ./start_beta.sh"),
+                            "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && grass " + avaflowGrassGisdbase + " --exec bash ./start_beta.sh"),
                     null, processTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
             if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("avaflow 执行失败，退出码：" + pr.exitCode + "\n" + pr.output);
