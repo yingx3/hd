@@ -82,6 +82,8 @@ public class AdminUserController {
 
     @Value("${app.avaflow.wsl-linux-home:/home/wm}")
     private String avaflowWslLinuxHome;
+    @Value("${app.avaflow.grass-gisdbase:/home/wm/grassdata/demo1/PERMANENT}")
+    private String avaflowGrassGisdbase;
 
     @Value("${app.avaflow.static-dir:D:/practice/nginx-1.24.0/html}")
     private String avaflowStaticDir;
@@ -930,7 +932,7 @@ public class AdminUserController {
             // UNCs: \wsl.localhost\Ubuntu-20.04\home\wm -> /mnt/... ? 直接用 wsl 内路径约定
             ProcessResult pr = runProcess(
                     Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
-                            "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && ./start_beta.sh"),
+                            "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && grass --exec " + avaflowGrassGisdbase + " bash ./start_beta.sh"),
                     null, processTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
             if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("avaflow 执行失败，退出码：" + pr.exitCode + "\n" + pr.output);
