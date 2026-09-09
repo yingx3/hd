@@ -55,6 +55,7 @@ def main():
     parser.add_argument("--output_dir", default=None, help="输出目录")
     parser.add_argument("--ice_content", type=float, default=0.2, help="体积含冰量 (0~1)")
     parser.add_argument("--temp_pattern", default="temp_%d.tif", help="温度文件命名模板")
+    parser.add_argument("--zmax_boost", type=float, default=0.0, help="冰岩崩物源厚度增量(m)，用于灾害链串联")
     args = parser.parse_args()
 
     # ========== 数据路径（根据实际路径修改） ==========
@@ -116,6 +117,11 @@ def main():
             raise FileNotFoundError(f"栅格文件不存在: {path}")
         grids[name], _, _, _, _ = _read_tif(path)
         print(f"  {name}: {path.name} — {grids[name].shape}")
+    # 冰岩崩物源厚度增量（灾害链串联：冰岩崩崩落物源 → 色东普物源厚度增强）
+    zmax_boost = args.zmax_boost
+    if zmax_boost != 0:
+        grids["zmax"] = grids["zmax"] + zmax_boost
+        print(f"  物源厚度增量 zmax_boost={zmax_boost} m")
 
     # ========== 4. 输出时间节点（仅最终时刻，不做逐帧动画） ==========
     time_nodes = np.array([t[-1]])
