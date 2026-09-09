@@ -55,7 +55,6 @@ def main():
     parser.add_argument("--output_dir", default=None, help="输出目录")
     parser.add_argument("--ice_content", type=float, default=0.2, help="体积含冰量 (0~1)")
     parser.add_argument("--temp_pattern", default="temp_%d.tif", help="温度文件命名模板")
-    parser.add_argument("--num_time_nodes", type=int, default=8, help="输出的代表性时间节点数")
     args = parser.parse_args()
 
     # ========== 数据路径（根据实际路径修改） ==========
@@ -118,11 +117,9 @@ def main():
         grids[name], _, _, _, _ = _read_tif(path)
         print(f"  {name}: {path.name} — {grids[name].shape}")
 
-    # ========== 4. 输出时间节点（等间隔取代表性节点，避免全时段内存爆炸） ==========
-    n_out = max(1, args.num_time_nodes)
-    _idx = np.unique(np.round(np.linspace(0, len(t) - 1, n_out)).astype(int))
-    time_nodes = t[_idx]
-    print(f"输出代表性时间节点 ({len(time_nodes)} 个): {time_nodes.astype(int)}")
+    # ========== 4. 输出时间节点（仅最终时刻，不做逐帧动画） ==========
+    time_nodes = np.array([t[-1]])
+    print(f"输出最终时间节点: {time_nodes.astype(int)}")
 
     # ========== 5. 调用 TRIGRS ==========
     print(f"\n开始 TRIGRS 计算 (含冰量={ice_content})...")

@@ -757,8 +757,7 @@ public class AdminUserController {
                             "--temp_path", tempPath,
                             "--output_dir", outputDir,
                             "--ice_content", String.valueOf(iceContent),
-                            "--temp_pattern", tempPattern,
-                            "--num_time_nodes", "8"),
+                            "--temp_pattern", tempPattern),
                     new File(projectRoot), processTimeoutSeconds, "SDP Python: ", Charset.forName("GBK"));
             if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("run.py 执行失败，退出码：" + pr.exitCode);
@@ -778,23 +777,20 @@ public class AdminUserController {
                 times.add("final"); // 兼容旧版：仅 ZMAX_final.tif
             }
 
-            // 一次性收集所有时间节点的 tif 路径
-            List<String> tifPaths = new ArrayList<>();
-            for (String tk : times) {
-                String tifPath = "final".equals(tk)
-                        ? outputDir + "/ZMAX_final.tif"
-                        : outputDir + "/ZMAX_t" + tk + ".tif";
-                if (!new File(tifPath).exists()) {
-                    return ResponseEntity.internalServerError().body("输出文件不存在: " + tifPath);
-                }
-                tifPaths.add(tifPath);
+            // 只取最后时间节点（最终状态，不做逐帧动画）
+            String tk = times.get(times.size() - 1);
+            String tifPath = "final".equals(tk)
+                    ? outputDir + "/ZMAX_final.tif"
+                    : outputDir + "/ZMAX_t" + tk + ".tif";
+            if (!new File(tifPath).exists()) {
+                return ResponseEntity.internalServerError().body("输出文件不存在: " + tifPath);
             }
 
-            // 单次进程批量转换（复用同一 PROJ/GDAL 栅格投影，避免逐帧重复启动&重投影）
+            // 单次进程转换最终 tif
             List<String> cmd = new ArrayList<>();
             cmd.add(pythonExe);
             cmd.add(convertScript);
-            cmd.addAll(tifPaths);
+            cmd.add(tifPath);
             ProcessResult pr2 = runProcess(cmd, new File(projectRoot), processTimeoutSeconds, "Convert: ", StandardCharsets.UTF_8);
             if (pr2.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败");
@@ -803,21 +799,15 @@ public class AdminUserController {
             if (jsonResult.isEmpty()) {
                 return ResponseEntity.internalServerError().body("tif_to_json.py 未返回结果");
             }
-            // 兼容批量输出（数组）与旧版单帧输出（对象）
             List<Map<String, Object>> rawFrames = parseFrameList(jsonResult);
-
-            List<Map<String, Object>> frames = new ArrayList<>();
-            int n = Math.min(rawFrames.size(), times.size());
-            for (int i = 0; i < n; i++) {
-                Map<String, Object> frame = buildFrame(rawFrames.get(i));
-                String tk = times.get(i);
-                frame.put("time", "final".equals(tk) ? 0.0 : Double.parseDouble(tk));
-                frames.add(frame);
+            if (rawFrames.isEmpty()) {
+                return ResponseEntity.internalServerError().body("tif_to_json.py 未返回有效帧");
             }
 
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("frames", frames);
-            return ResponseEntity.ok(resp);
+            // 返回最后一帧（单对象）
+            Map<String, Object> frame = buildFrame(rawFrames.get(rawFrames.size() - 1));
+            frame.put("time", "final".equals(tk) ? 0.0 : Double.parseDouble(tk));
+            return ResponseEntity.ok(frame);
 
         } catch (Exception e) {
             e.printStackTrace();
