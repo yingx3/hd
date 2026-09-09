@@ -976,7 +976,7 @@ public class AdminUserController {
     private Map<String, Object> convertAvaflowFrames(String asciiDir, String prefix, String staticDir) {
         Map<String, Object> out = new HashMap<>();
         File dir = new File(asciiDir);
-        File[] files = dir.listFiles((d, name) -> name.matches(prefix + "_hflow_max\\d{4}\\.asc"));
+        File[] files = dir.listFiles((d, name) -> name.matches(prefix + "_hflow\\d{4}\\.asc"));
         int count = 0;
         String outputBase = avaflowStaticDir + "/avaflow_beta";
         if (files != null && files.length > 0) {
