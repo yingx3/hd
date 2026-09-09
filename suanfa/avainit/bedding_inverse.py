@@ -202,7 +202,9 @@ class Anti():  # 类名规范：首字母大写
         # 输出JSON数据
         data = {
             "t": self.t.tolist(),
-            "fos": fos.tolist()
+            "fos": fos.tolist(),
+            "iceVolume": float(self.vf),
+            "debrisVolume": float(self.vf * 3.0)
         }
         # 确保目录存在
         os.makedirs('src/main/resources/static', exist_ok=True)

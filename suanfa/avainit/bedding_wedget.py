@@ -98,7 +98,7 @@ class wedge:
             print("RESULT_JSON=" + json.dumps({"error": "楔体滑动倾角(%.1f°) > 边坡倾角(%.1f°)，请输入正确的法向量或增大边坡倾角" % (np.round(90 - np.degrees(self.omga), 1), self.alpha)}, ensure_ascii=False))
             return
         fos = self.factor_of_safety(t)
-        data = {"t": t.tolist(), "fos": fos.tolist()}
+        data = {"t": t.tolist(), "fos": fos.tolist(), "iceVolume": float(self.vf), "debrisVolume": float(self.vf * 3.0)}
         os.makedirs('src/main/resources/static', exist_ok=True)
         with open(r'src/main/resources/static/output_wedge.txt', 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
