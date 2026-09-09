@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--output_dir", default=None, help="输出目录")
     parser.add_argument("--ice_content", type=float, default=0.2, help="体积含冰量 (0~1)")
     parser.add_argument("--temp_pattern", default="temp_%d.tif", help="温度文件命名模板")
+    parser.add_argument("--num_time_nodes", type=int, default=8, help="输出的代表性时间节点数")
     args = parser.parse_args()
 
     # ========== 数据路径（根据实际路径修改） ==========
@@ -95,8 +96,11 @@ def main():
         grids[name], _, _, _, _ = _read_tif(path)
         print(f"  {name}: {path.name} — {grids[name].shape}")
 
-    # ========== 4. 输出时间节点 ==========
-    time_nodes = np.array([t[-1]])
+    # ========== 4. 输出时间节点（等间隔取代表性节点，避免全时段内存爆炸） ==========
+    n_out = max(1, args.num_time_nodes)
+    _idx = np.unique(np.round(np.linspace(0, len(t) - 1, n_out)).astype(int))
+    time_nodes = t[_idx]
+    print(f"输出代表性时间节点 ({len(time_nodes)} 个): {time_nodes.astype(int)}")
 
     # ========== 5. 调用 TRIGRS ==========
     print(f"\n开始 TRIGRS 计算 (含冰量={ice_content})...")
@@ -120,38 +124,41 @@ def main():
         ice_content=ice_content,
     )
 
-    # ========== 6. 后处理 ==========
-    Phead_final = Phead_all[:, :, 0]
-    Fs_original = Fs_all[:, :, 0]
-    Theta_final = Theta_all[:, :, 0]
-
-    # 安全系数缩放：除以10，映射到 [0,1]
-    Fs_scaled = Fs_original / 10.0
-
-    # 滑面深度 = 缩放后FS × 土壤厚度
+    # ========== 6. 后处理：逐时间节点计算并输出 ZMAX 等结果 ==========
     zmax_mat = grids['zmax']
-    ZMAX_new = Fs_scaled * zmax_mat
-
-    # ========== 7. 保存 GeoTIFF ==========
     h, w = grids['dem'].shape
+    nt = len(time_nodes)
     print("\n保存结果...")
 
-    _write_tif(output_dir / 'Phead_final.tif',    Phead_final, first_transform, first_crs, h, w)
-    _write_tif(output_dir / 'Fs_scaled.tif',      Fs_scaled,   first_transform, first_crs, h, w)
-    _write_tif(output_dir / 'ZMAX_final.tif',     ZMAX_new,   first_transform, first_crs, h, w)
-    _write_tif(output_dir / 'Theta_final.tif',    Theta_final, first_transform, first_crs, h, w)
+    time_list = []
+    for kt in range(nt):
+        tk = float(time_nodes[kt])
+        Fs_scaled = Fs_all[:, :, kt] / 10.0
+        ZMAX_node = Fs_scaled * zmax_mat
+        _write_tif(output_dir / f'ZMAX_t{tk:.0f}.tif', ZMAX_node, first_transform, first_crs, h, w)
+        _write_tif(output_dir / f'Phead_t{tk:.0f}.tif', Phead_all[:, :, kt], first_transform, first_crs, h, w)
+        _write_tif(output_dir / f'Theta_t{tk:.0f}.tif', Theta_all[:, :, kt], first_transform, first_crs, h, w)
+        time_list.append(tk)
+
+    # 兼容：最后一个时间节点另存为 *_final.tif
+    last = nt - 1
+    Fs_scaled_last = Fs_all[:, :, last] / 10.0
+    _write_tif(output_dir / 'Phead_final.tif', Phead_all[:, :, last], first_transform, first_crs, h, w)
+    _write_tif(output_dir / 'Fs_scaled.tif', Fs_scaled_last, first_transform, first_crs, h, w)
+    _write_tif(output_dir / 'ZMAX_final.tif', Fs_scaled_last * zmax_mat, first_transform, first_crs, h, w)
+    _write_tif(output_dir / 'Theta_final.tif', Theta_all[:, :, last], first_transform, first_crs, h, w)
+
+    # 供后端读取的时间节点序列
+    print("TIME_NODES=" + ",".join(f"{tk:.0f}" for tk in time_list))
 
     print(f"\n全部完成！结果保存在: {output_dir}")
-    print(f"  ZMAX_final.tif    — 泥石流起动区深度 (m)")
-    print(f"  Fs_scaled.tif     — 缩放后安全系数 [0,1]")
-    print(f"  Phead_final.tif   — 滑面处压力水头 (m)")
-    print(f"  Theta_final.tif   — 滑面处体积含水率 (-)")
-
-    valid_zm = ZMAX_new[~np.isnan(ZMAX_new)]
-    if len(valid_zm) > 0:
-        print(f"  ZMAX 范围: [{valid_zm.min():.4f}, {valid_zm.max():.4f}] m")
-    else:
-        print(f"  ZMAX: 全部为 NaN（无效像元）")
+    print(f"  共 {nt} 个时间节点")
+    for kt in range(nt):
+        tk = float(time_nodes[kt])
+        ZMAX_node = (Fs_all[:, :, kt] / 10.0) * zmax_mat
+        valid = ZMAX_node[~np.isnan(ZMAX_node)]
+        rng = f"[{valid.min():.4f}, {valid.max():.4f}] m" if len(valid) else "全部为 NaN（无效像元）"
+        print(f"  ZMAX_t{tk:.0f}.tif — t={tk:.0f}s ({tk/86400:.2f} 天): {rng}")
 
 
 if __name__ == '__main__':

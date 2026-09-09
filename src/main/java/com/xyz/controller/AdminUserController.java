@@ -739,10 +739,7 @@ public class AdminUserController {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
-    }
-
-
-    @PostMapping("/SDP_Start")
+    }    @PostMapping("/SDP_Start")
     public ResponseEntity<?> processSDPStart(@RequestBody Map<String, Object> body) {
         String pythonScript = projectRoot + "/suanfa/SDP_Start/python/run.py";
         String convertScript = projectRoot + "/suanfa/SDP_Start/python/tif_to_json.py";
@@ -760,73 +757,105 @@ public class AdminUserController {
                             "--temp_path", tempPath,
                             "--output_dir", outputDir,
                             "--ice_content", String.valueOf(iceContent),
-                            "--temp_pattern", tempPattern),
+                            "--temp_pattern", tempPattern,
+                            "--num_time_nodes", "8"),
                     new File(projectRoot), processTimeoutSeconds, "SDP Python: ", Charset.forName("GBK"));
             if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("run.py 执行失败，退出码：" + pr.exitCode);
             }
 
-            String tifPath = outputDir + "/ZMAX_final.tif";
-            File tifFile = new File(tifPath);
-            if (!tifFile.exists()) {
-                return ResponseEntity.internalServerError().body("输出文件不存在: " + tifPath);
+            // 代表性时间节点序列（对应 ZMAX_t<time>.tif）
+            List<String> times = new ArrayList<>();
+            String timeLine = extractSentinel(pr.output, "TIME_NODES=");
+            if (!timeLine.isEmpty()) {
+                for (String s : timeLine.split(",")) {
+                    if (!s.trim().isEmpty()) {
+                        times.add(s.trim());
+                    }
+                }
+            }
+            if (times.isEmpty()) {
+                times.add("final"); // 兼容旧版：仅 ZMAX_final.tif
             }
 
-            ProcessResult pr2 = runProcess(
-                    Arrays.asList(pythonExe, convertScript, tifPath),
-                    new File(projectRoot), processTimeoutSeconds, "Convert: ", StandardCharsets.UTF_8);
-            if (pr2.exitCode != 0) {
-                return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败");
-            }
-            String jsonResult = extractSentinel(pr2.output, "RESULT_JSON=");
-            if (jsonResult.isEmpty()) {
-                return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败");
-            }
+            List<Map<String, Object>> frames = new ArrayList<>();
+            for (String tk : times) {
+                String tifPath = "final".equals(tk)
+                        ? outputDir + "/ZMAX_final.tif"
+                        : outputDir + "/ZMAX_t" + tk + ".tif";
+                File tifFile = new File(tifPath);
+                if (!tifFile.exists()) {
+                    return ResponseEntity.internalServerError().body("输出文件不存在: " + tifPath);
+                }
 
-            Map<String, Object> rawResult = OBJECT_MAPPER.readValue(jsonResult, new TypeReference<Map<String, Object>>() {});
-            boolean isProjected = Boolean.TRUE.equals(rawResult.get("isProjected"));
-            double west  = Double.parseDouble(rawResult.get("west").toString());
-            double south = Double.parseDouble(rawResult.get("south").toString());
-            double east  = Double.parseDouble(rawResult.get("east").toString());
-            double north = Double.parseDouble(rawResult.get("north").toString());
+                ProcessResult pr2 = runProcess(
+                        Arrays.asList(pythonExe, convertScript, tifPath),
+                        new File(projectRoot), processTimeoutSeconds, "Convert: ", StandardCharsets.UTF_8);
+                if (pr2.exitCode != 0) {
+                    return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败: " + tifPath);
+                }
+                String jsonResult = extractSentinel(pr2.output, "RESULT_JSON=");
+                if (jsonResult.isEmpty()) {
+                    return ResponseEntity.internalServerError().body("tif_to_json.py 未返回结果: " + tifPath);
+                }
 
-            double minLng, minLat, maxLng, maxLat;
-            if (isProjected && rawResult.get("crsWkt") != null && !rawResult.get("crsWkt").toString().isEmpty()) {
-                String crsWkt = rawResult.get("crsWkt").toString();
-                CoordinateReferenceSystem sourceCRS = CRS.parseWKT(crsWkt);
-                CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
-                MathTransform transform = CRS.findMathTransform(sourceCRS, targetCRS);
-                double[] sw = new double[]{west, south};
-                double[] ne = new double[]{east, north};
-                transform.transform(sw, 0, sw, 0, 1);
-                transform.transform(ne, 0, ne, 0, 1);
-                minLng = sw[0];
-                minLat = sw[1];
-                maxLng = ne[0];
-                maxLat = ne[1];
-            } else {
-                minLng = west;
-                minLat = south;
-                maxLng = east;
-                maxLat = north;
+                Map<String, Object> rawResult = OBJECT_MAPPER.readValue(jsonResult, new TypeReference<Map<String, Object>>() {});
+                Map<String, Object> frame = buildFrame(rawResult);
+                frame.put("time", "final".equals(tk) ? 0.0 : Double.parseDouble(tk));
+                frames.add(frame);
             }
 
-            Map<String, Object> result = new HashMap<>();
-            result.put("minLng", Math.round(minLng * 1000000.0) / 1000000.0);
-            result.put("minLat", Math.round(minLat * 1000000.0) / 1000000.0);
-            result.put("maxLng", Math.round(maxLng * 1000000.0) / 1000000.0);
-            result.put("maxLat", Math.round(maxLat * 1000000.0) / 1000000.0);
-            result.put("imageBase64", rawResult.get("imageBase64"));
-            result.put("width", rawResult.get("width"));
-            result.put("height", rawResult.get("height"));
-            result.put("valueRange", rawResult.get("valueRange"));
-            return ResponseEntity.ok(result);
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("frames", frames);
+            return ResponseEntity.ok(resp);
 
         } catch (Exception e) {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
     }
+
+    /** 将 tif_to_json.py 的 RESULT_JSON 转为前端帧（WGS84 边界，兼容投影情况）。 */
+    private Map<String, Object> buildFrame(Map<String, Object> rawResult) throws Exception {
+        boolean isProjected = Boolean.TRUE.equals(rawResult.get("isProjected"));
+        double west  = Double.parseDouble(rawResult.get("west").toString());
+        double south = Double.parseDouble(rawResult.get("south").toString());
+        double east  = Double.parseDouble(rawResult.get("east").toString());
+        double north = Double.parseDouble(rawResult.get("north").toString());
+
+        double minLng, minLat, maxLng, maxLat;
+        if (isProjected && rawResult.get("crsWkt") != null && !rawResult.get("crsWkt").toString().isEmpty()) {
+            String crsWkt = rawResult.get("crsWkt").toString();
+            CoordinateReferenceSystem sourceCRS = CRS.parseWKT(crsWkt);
+            CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
+            MathTransform transform = CRS.findMathTransform(sourceCRS, targetCRS);
+            double[] sw = new double[]{west, south};
+            double[] ne = new double[]{east, north};
+            transform.transform(sw, 0, sw, 0, 1);
+            transform.transform(ne, 0, ne, 0, 1);
+            minLng = sw[0];
+            minLat = sw[1];
+            maxLng = ne[0];
+            maxLat = ne[1];
+        } else {
+            minLng = west;
+            minLat = south;
+            maxLng = east;
+            maxLat = north;
+        }
+
+        Map<String, Object> frame = new HashMap<>();
+        frame.put("minLng", Math.round(minLng * 1000000.0) / 1000000.0);
+        frame.put("minLat", Math.round(minLat * 1000000.0) / 1000000.0);
+        frame.put("maxLng", Math.round(maxLng * 1000000.0) / 1000000.0);
+        frame.put("maxLat", Math.round(maxLat * 1000000.0) / 1000000.0);
+        frame.put("imageBase64", rawResult.get("imageBase64"));
+        frame.put("width", rawResult.get("width"));
+        frame.put("height", rawResult.get("height"));
+        frame.put("valueRange", rawResult.get("valueRange"));
+        return frame;
+    }
+
 
 
     @PostMapping("/seismic_dl")
