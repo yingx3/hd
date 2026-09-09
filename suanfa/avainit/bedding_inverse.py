@@ -1,8 +1,5 @@
 import numpy as np
 import math
-import matplotlib
-matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
 import sys
 import json
 import os  # 新增：用于路径处理
@@ -192,7 +189,7 @@ class Anti():  # 类名规范：首字母大写
                   "rs=", self.rs,
                   "Ks=", self.Ks,
                   )
-            print("ERROR: 坡度角+反倾角必须≥90°")
+            print("RESULT_JSON=" + json.dumps({"error": "坡度角+反倾角必须≥90°"}, ensure_ascii=False))
             return
 
         # 计算安全系数
@@ -212,7 +209,7 @@ class Anti():  # 类名规范：首字母大写
         with open(r'src/main/resources/static/output_anti.txt', 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
 
-        print("FILE_SAVED: output_anti.txt")
+        print("RESULT_JSON=" + json.dumps(data, ensure_ascii=False))
 
         # 绘图
         # fig, ax = plt.subplots(figsize=(8, 4), layout='constrained')

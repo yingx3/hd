@@ -815,6 +815,65 @@ public class AdminUserController {
         }
     }
 
+    @PostMapping("/avainit")
+    public ResponseEntity<?> runAvainit(@RequestBody Map<String, Object> body) {
+        return runAvainitScript("bedding.py", Arrays.asList(
+                str(body, "melt_duration"), str(body, "slope_angle"), str(body, "slide_angle"),
+                str(body, "ice_thickness"), str(body, "fissure_height"), str(body, "slide_length"),
+                str(body, "cohesion"), str(body, "friction_angle"), str(body, "rock_density"),
+                str(body, "permeability")));
+    }
+
+    @PostMapping("/bedding_inverse")
+    public ResponseEntity<?> runBeddingInverse(@RequestBody Map<String, Object> body) {
+        return runAvainitScript("bedding_inverse.py", Arrays.asList(
+                str(body, "melt_duration"), str(body, "slope_angle"), str(body, "inverse_angle"),
+                str(body, "ice_thickness"), str(body, "slope_height"), str(body, "bedding_space"),
+                str(body, "cohesion"), str(body, "friction_angle"), str(body, "rock_density"),
+                str(body, "permeability")));
+    }
+
+    @PostMapping("/bedding_wedge")
+    public ResponseEntity<?> runBeddingWedge(@RequestBody Map<String, Object> body) {
+        return runAvainitScript("bedding_wedget.py", Arrays.asList(
+                str(body, "melt_duration"), str(body, "slope_angle"), str(body, "normal_vector"),
+                str(body, "ice_thickness"), str(body, "square"), str(body, "slope_height"),
+                str(body, "fracture"), str(body, "cohesion"), str(body, "friction_angle"),
+                str(body, "rock_density"), str(body, "permeability")));
+    }
+
+    private String str(Map<String, Object> body, String key) {
+        Object v = body.get(key);
+        return v == null ? "" : v.toString();
+    }
+
+    /** 统一调用冰岩崩启动模型 Python 脚本，解析 stdout 的 RESULT_JSON 并回传。 */
+    private ResponseEntity<?> runAvainitScript(String scriptName, List<String> args) {
+        try {
+            String scriptPath = projectRoot + "/suanfa/avainit/" + scriptName;
+            List<String> cmd = new ArrayList<>();
+            cmd.add(pythonExe);
+            cmd.add(scriptPath);
+            cmd.addAll(args);
+            ProcessResult pr = runProcess(cmd, new File(projectRoot), processTimeoutSeconds, "[avainit] ", StandardCharsets.UTF_8);
+            if (pr.exitCode != 0) {
+                return ResponseEntity.internalServerError().body("脚本执行失败，退出码：" + pr.exitCode);
+            }
+            String jsonResult = extractSentinel(pr.output, "RESULT_JSON=");
+            if (jsonResult.isEmpty()) {
+                return ResponseEntity.internalServerError().body("脚本未返回结果");
+            }
+            Map<String, Object> result = OBJECT_MAPPER.readValue(jsonResult, new TypeReference<Map<String, Object>>() {});
+            if (result != null && result.containsKey("error")) {
+                return ResponseEntity.badRequest().body(String.valueOf(result.get("error")));
+            }
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+
     /**
      * 解析 tif_to_json.py 的 RESULT_JSON：
      * 兼容批量输出（JSON 数组）与旧版单帧输出（JSON 对象）。

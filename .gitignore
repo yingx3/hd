@@ -33,3 +33,5 @@ __pycache__/
 
 # --- Logs ---
 *.log
+output_anti.txt
+output_wedge.txt

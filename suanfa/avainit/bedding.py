@@ -1,10 +1,8 @@
 import numpy as np
 import math
-import matplotlib
-matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
 import sys
 import json
+import os
 
 class bedding():
     def __init__(self, melt_duration, slope_angle, slide_angle, ice_thickness,
@@ -23,7 +21,7 @@ class bedding():
         self.Ks = permeability  # 渗透系数
 
         # 时间数组（小时转秒，高密度采样）
-        self.t = np.linspace(0, self.t_total * 3600, self.t_total * 600)
+        self.t = np.linspace(0, self.t_total * 3600, 240)
 
         # 固定物理参数
         self.s1 = np.sin(np.radians(self.theta))
@@ -95,29 +93,13 @@ class bedding():
         "t": t.tolist(),
         "fos": fos.tolist()
         }
-        # 写入文件：路径 .\output_bedding.txt，自动覆写
+        # 写入静态文件（兼容旧版前端）
+        os.makedirs('src/main/resources/static', exist_ok=True)
         with open(r'src/main/resources/static/output_bedding.txt', 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
+        # 单行标记，Java 用 extractSentinel 读取
+        print("RESULT_JSON=" + json.dumps(data, ensure_ascii=False))
 
-        # 只输出一行标记（Java 可以用来判断是否完成）
-        print("FILE_SAVED: output_bedding.txt")
-
-
-
-        # 保存结果到txt
-        result = 0 if np.any(fos < 1) else 1
-        # np.savetxt(r'.\output_bedding.txt', np.array([result]))
-
-        # 绘图
-        fig, ax = plt.subplots(layout='constrained')
-        ax.plot(t / (3600 * 24), fos, 'b', label='FOS')
-        ax.set_xlabel('t (days)')
-        ax.set_ylabel('Factor Of Safety')
-        ax.set_xlim(left=0)
-        ax.set_ylim(bottom=np.min(fos))
-        plt.legend()
-        plt.title('Bedding Slope Stability - Factor of Safety')
-        # plt.show()
         # 打印 t 数组
     #     print("t_array:", t)
     # # 打印 fos 数组
@@ -127,16 +109,16 @@ class bedding():
 # ===================== 直接运行 =====================
 if __name__ == '__main__':
     params = {
-        "slope_angle": int(sys.argv[1]),
-        "slide_angle": int(sys.argv[2]),
-        "cohesion": int(sys.argv[3]),
-        "friction_angle": int(sys.argv[4]),
-        "rock_density": int(sys.argv[5]),
-        "permeability": float(sys.argv[6]),
-        "ice_thickness": int(sys.argv[7]),
-        "fissure_height": int(sys.argv[8]),
-        "melt_duration": int(sys.argv[9]),
-        "slide_length": int(sys.argv[10])
+        "melt_duration": float(sys.argv[1]),
+        "slope_angle": float(sys.argv[2]),
+        "slide_angle": float(sys.argv[3]),
+        "ice_thickness": float(sys.argv[4]),
+        "fissure_height": float(sys.argv[5]),
+        "slide_length": float(sys.argv[6]),
+        "cohesion": float(sys.argv[7]),
+        "friction_angle": float(sys.argv[8]),
+        "rock_density": float(sys.argv[9]),
+        "permeability": float(sys.argv[10])
     }
 
     model = bedding(**params)
