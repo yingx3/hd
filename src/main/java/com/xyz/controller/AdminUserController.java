@@ -778,29 +778,39 @@ public class AdminUserController {
                 times.add("final"); // 兼容旧版：仅 ZMAX_final.tif
             }
 
-            List<Map<String, Object>> frames = new ArrayList<>();
+            // 一次性收集所有时间节点的 tif 路径
+            List<String> tifPaths = new ArrayList<>();
             for (String tk : times) {
                 String tifPath = "final".equals(tk)
                         ? outputDir + "/ZMAX_final.tif"
                         : outputDir + "/ZMAX_t" + tk + ".tif";
-                File tifFile = new File(tifPath);
-                if (!tifFile.exists()) {
+                if (!new File(tifPath).exists()) {
                     return ResponseEntity.internalServerError().body("输出文件不存在: " + tifPath);
                 }
+                tifPaths.add(tifPath);
+            }
 
-                ProcessResult pr2 = runProcess(
-                        Arrays.asList(pythonExe, convertScript, tifPath),
-                        new File(projectRoot), processTimeoutSeconds, "Convert: ", StandardCharsets.UTF_8);
-                if (pr2.exitCode != 0) {
-                    return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败: " + tifPath);
-                }
-                String jsonResult = extractSentinel(pr2.output, "RESULT_JSON=");
-                if (jsonResult.isEmpty()) {
-                    return ResponseEntity.internalServerError().body("tif_to_json.py 未返回结果: " + tifPath);
-                }
+            // 单次进程批量转换（复用同一 PROJ/GDAL 栅格投影，避免逐帧重复启动&重投影）
+            List<String> cmd = new ArrayList<>();
+            cmd.add(pythonExe);
+            cmd.add(convertScript);
+            cmd.addAll(tifPaths);
+            ProcessResult pr2 = runProcess(cmd, new File(projectRoot), processTimeoutSeconds, "Convert: ", StandardCharsets.UTF_8);
+            if (pr2.exitCode != 0) {
+                return ResponseEntity.internalServerError().body("tif_to_json.py 执行失败");
+            }
+            String jsonResult = extractSentinel(pr2.output, "RESULT_JSON=");
+            if (jsonResult.isEmpty()) {
+                return ResponseEntity.internalServerError().body("tif_to_json.py 未返回结果");
+            }
+            List<Map<String, Object>> rawFrames =
+                    OBJECT_MAPPER.readValue(jsonResult, new TypeReference<List<Map<String, Object>>>() {});
 
-                Map<String, Object> rawResult = OBJECT_MAPPER.readValue(jsonResult, new TypeReference<Map<String, Object>>() {});
-                Map<String, Object> frame = buildFrame(rawResult);
+            List<Map<String, Object>> frames = new ArrayList<>();
+            int n = Math.min(rawFrames.size(), times.size());
+            for (int i = 0; i < n; i++) {
+                Map<String, Object> frame = buildFrame(rawFrames.get(i));
+                String tk = times.get(i);
                 frame.put("time", "final".equals(tk) ? 0.0 : Double.parseDouble(tk));
                 frames.add(frame);
             }

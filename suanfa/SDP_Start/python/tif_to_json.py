@@ -1,41 +1,95 @@
-﻿import io, sys, json, base64, numpy as np, rasterio
+﻿# -*- coding: utf-8 -*-
+import io, sys, os, json, base64, glob
+
+# ---------- 修复 PROJ/GDAL 数据目录（避免系统 PostGIS 的旧 proj.db 覆盖） ----------
+def _resolve_proj_data():
+    def has(d):
+        return bool(d) and os.path.isfile(os.path.join(d, "proj.db"))
+    for base in sys.path:
+        for rel in ("rasterio/proj_data", "pyproj/proj_dir/share/proj", "rasterio/proj", "rasterio/data"):
+            d = os.path.join(base, rel)
+            if has(d):
+                return d
+    pfx = os.environ.get("CONDA_PREFIX", "")
+    if pfx:
+        for rel in ("Library/share/proj", "share/proj"):
+            d = os.path.join(pfx, rel)
+            if has(d):
+                return d
+    return None
+
+def _resolve_gdal_data():
+    for base in sys.path:
+        for rel in ("rasterio/gdal_data", "rasterio/data"):
+            d = os.path.join(base, rel)
+            if os.path.isdir(d):
+                return d
+    pfx = os.environ.get("CONDA_PREFIX", "")
+    if pfx:
+        d = os.path.join(pfx, "Library/share/gdal")
+        if os.path.isdir(d):
+            return d
+    return None
+
+_p = _resolve_proj_data()
+if _p:
+    os.environ["PROJ_DATA"] = _p
+    os.environ["PROJ_LIB"] = _p
+_g = _resolve_gdal_data()
+if _g:
+    os.environ["GDAL_DATA"] = _g
+
+import numpy as np
+import rasterio
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio.crs import CRS as RasterioCRS
 
-def _warp_to_wgs84(band, src):
-    """若源坐标系非 EPSG:4326，用 GDAL warp 把栅格重投影到 WGS84，返回 (band, bounds_tuple)。"""
-    src_crs = src.crs
-    dst_crs = RasterioCRS.from_epsg(4326)
-    if src_crs is None or src_crs == dst_crs:
-        # 未知 or 已是 WGS84：直接按原 bounds
-        return band, (src.bounds.left, src.bounds.bottom, src.bounds.right, src.bounds.top)
+# 投影参数缓存：同一栅格网格的多帧复用同一 dst transform，避免重复计算
+_warp_cache = {}
 
+def _get_warp_params(src):
+    crs = src.crs
+    if crs is None:
+        return None
+    dst_crs = RasterioCRS.from_epsg(4326)
+    if crs == dst_crs:
+        return None
+    key = (crs.to_string() if crs else "", tuple(src.transform), src.width, src.height)
+    cached = _warp_cache.get(key)
+    if cached:
+        return cached
+    transform, width, height = calculate_default_transform(
+        crs, dst_crs, src.width, src.height, *src.bounds)
+    params = (dst_crs, transform, width, height)
+    _warp_cache[key] = params
+    return params
+
+def _warp_to_wgs84(band, src):
+    params = _get_warp_params(src)
+    if params is None:
+        return band, (src.bounds.left, src.bounds.bottom, src.bounds.right, src.bounds.top)
+    dst_crs, transform, width, height = params
     nodata = src.nodata
     sentinel = nodata if nodata is not None else -9999.0
     valid = (~np.isnan(band)).astype(np.float64)
     data = np.where(np.isnan(band), sentinel, band)
 
-    transform, width, height = calculate_default_transform(
-        src_crs, dst_crs, src.width, src.height, *src.bounds)
-
     dst = np.zeros((height, width), dtype=np.float64)
     dst_valid = np.zeros((height, width), dtype=np.float64)
     reproject(source=data, destination=dst,
-              src_transform=src.transform, src_crs=src_crs,
+              src_transform=src.transform, src_crs=src.crs,
               dst_transform=transform, dst_crs=dst_crs,
               src_nodata=sentinel, dst_nodata=sentinel,
               resampling=Resampling.nearest)
     reproject(source=valid, destination=dst_valid,
-              src_transform=src.transform, src_crs=src_crs,
+              src_transform=src.transform, src_crs=src.crs,
               dst_transform=transform, dst_crs=dst_crs,
               resampling=Resampling.nearest)
     dst[dst_valid < 0.5] = np.nan
-    # dst 栅格为 WGS84 轴对齐网格，其范围即图片应在地图上覆盖的矩形
     left = transform[2]
     top = transform[5]
-    right = left + transform[0] * width
-    bottom = top + transform[4] * height
-    return dst, (left, bottom, right, top)
+    bounds = (left, top + transform[4] * height, left + transform[0] * width, top)
+    return dst, bounds
 
 def tif_to_json(tif_path):
     with rasterio.open(tif_path) as src:
@@ -46,7 +100,6 @@ def tif_to_json(tif_path):
         band, bounds = _warp_to_wgs84(band, src)
         crs_out = RasterioCRS.from_epsg(4326)
 
-        # 归一化 + 颜色映射
         valid = band[~np.isnan(band)]
         if len(valid) == 0:
             vmin, vmax = 0, 1
@@ -56,8 +109,8 @@ def tif_to_json(tif_path):
                 vmax = vmin + 1e-9
 
         norm = np.clip((band - vmin) / (vmax - vmin), 0, 1)
+        norm = np.where(np.isnan(norm), 0.0, norm)  # NoData 处归零，避免 NaN 转 int 越界
 
-        # 物源方量配色：浅黄(低物源) → 橙 → 红 → 深褐(高物源)
         cmap = np.array([
             [255, 255, 229],
             [255, 237, 160],
@@ -83,17 +136,17 @@ def tif_to_json(tif_path):
         rgb[np.isnan(band)] = [255, 255, 255]
 
         from PIL import Image
-        img = Image.fromarray(rgb, 'RGB')
+        img = Image.fromarray(rgb, "RGB")
         buf = io.BytesIO()
-        img.save(buf, format='PNG')
-        png_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+        img.save(buf, format="PNG")
+        png_base64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         return {
             "west": round(bounds[0], 6),
             "south": round(bounds[1], 6),
             "east": round(bounds[2], 6),
             "north": round(bounds[3], 6),
-            "isProjected": False,           # 已统一转换到 WGS84
+            "isProjected": False,
             "crsWkt": crs_out.to_wkt(),
             "imageBase64": png_base64,
             "width": w,
@@ -101,6 +154,10 @@ def tif_to_json(tif_path):
             "valueRange": [round(float(vmin), 4), round(float(vmax), 4)],
         }
 
-if __name__ == '__main__':
-    result = tif_to_json(sys.argv[1])
-    print("RESULT_JSON=" + json.dumps(result, ensure_ascii=False))
+if __name__ == "__main__":
+    paths = sys.argv[1:]
+    if not paths:
+        print("usage: python tif_to_json.py <tif> [tif2 ...]")
+        sys.exit(1)
+    frames = [tif_to_json(p) for p in paths]
+    print("RESULT_JSON=" + json.dumps(frames, ensure_ascii=False))

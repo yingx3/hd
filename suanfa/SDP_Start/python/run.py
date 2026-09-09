@@ -23,6 +23,28 @@ from pathlib import Path
 import numpy as np
 import numpy as np
 
+# 强制使用新版 PROJ/GDAL 数据目录，避免系统 PostGIS 的旧 proj.db 覆盖
+def _fix_proj_data():
+    def has(d):
+        return bool(d) and os.path.isfile(os.path.join(d, 'proj.db'))
+    for base in sys.path:
+        for rel in ('rasterio/proj_data', 'pyproj/proj_dir/share/proj', 'rasterio/proj', 'rasterio/data'):
+            d = os.path.join(base, rel)
+            if has(d):
+                os.environ['PROJ_DATA'] = d
+                os.environ['PROJ_LIB'] = d
+                return
+    pfx = os.environ.get('CONDA_PREFIX', '')
+    if pfx:
+        for rel in ('Library/share/proj', 'share/proj'):
+            d = os.path.join(pfx, rel)
+            if has(d):
+                os.environ['PROJ_DATA'] = d
+                os.environ['PROJ_LIB'] = d
+                return
+
+_fix_proj_data()
+
 from trigrs import run_trigrs, _read_tif, _write_tif
 
 
