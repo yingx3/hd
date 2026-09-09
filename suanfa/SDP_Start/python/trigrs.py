@@ -299,7 +299,7 @@ def run_trigrs(time_nodes, rain_path, temp_3d, t,
         if ss % 10 == 0 or ss == n_periods - 1:
             print(f"  时段 {ss+1}/{n_periods}  剩余冰均值 {np.mean(remaining_ice):.4f}m", flush=True)
 
-    # ---- 3. 稳定性计算 ----
+    # ---- 3. 稳定性计算（仅有效像元，避免全网格向量化拖慢） ----
     time_nodes = np.atleast_1d(time_nodes).ravel()
     nt = len(time_nodes)
     Zbin = 11
@@ -315,53 +315,63 @@ def run_trigrs(time_nodes, rain_path, temp_3d, t,
         Z_valid[i, :] = np.round(np.linspace(0, zmax_1d[valid_idx[i]], Zbin) * 1000) / 1000
     Z_valid[:, 0] = 0.005
 
+    # 有效像元切片（计算只在这些像元上做，速度约为全网格 n_cells/n_valid 倍）
+    v = valid_idx
+    Ks_v     = Ks_1d[v]
+    D1_v     = D1[v]
+    beta_v   = beta[v]
+    c_v      = c_1d[v]
+    Ys_v     = Ys_1d[v]
+    Yw_v     = Yw_1d[v]
+    f_v      = f_1d[v]
+    depthwt_v = depthwt_1d[v]
+    slope_v  = r_slope[v]
+    Inz2_v   = Inz2[v, :]            # (n_valid, n_periods)
+    porosity_v = np.full(n_valid, 0.4, dtype=np.float64)
+
     for kt in range(nt):
         Tk = time_nodes[kt]
 
-        # 深度层数组: (n_cells, Zbin) 由 Z_valid 填充
-        Z1 = np.full((n_cells, Zbin), np.nan, dtype=np.float64)
-        Z1[valid_idx] = Z_valid
-
-        Pdepth      = np.full((n_cells, Zbin), np.nan, dtype=np.float64)
-        Fs2         = np.full((n_cells, Zbin), np.nan, dtype=np.float64)
-        Theta_layer = np.full((n_cells, Zbin), np.nan, dtype=np.float64)
+        Pdepth_v = np.full((n_valid, Zbin), np.nan, dtype=np.float64)
+        Fs2_v    = np.full((n_valid, Zbin), np.nan, dtype=np.float64)
+        Theta_v  = np.full((n_valid, Zbin), np.nan, dtype=np.float64)
 
         for k in range(Zbin):
-            Zk = Z1[:, k]
-            Pzera = (Zk - depthwt_1d) * beta
+            Zk = Z_valid[:, k]
+            Pzera = (Zk - depthwt_v) * beta_v
 
             # 瞬态项 Ptran1
-            Ptran1 = np.zeros(n_cells, dtype=np.float64)
+            Ptran1 = np.zeros(n_valid, dtype=np.float64)
             for i in range(N):
                 delta_t = Tk - t[i]
                 if delta_t <= 0:
                     break
-                sqrt_dt = np.sqrt(np.maximum(D1, 1e-15) * delta_t)
-                Ptran1 += (2.0 * Inz2[:, i] / Ks_1d) * sqrt_dt * _ierfc(Zk / (2.0 * sqrt_dt))
+                sqrt_dt = np.sqrt(np.maximum(D1_v, 1e-15) * delta_t)
+                Ptran1 += (2.0 * Inz2_v[:, i] / Ks_v) * sqrt_dt * _ierfc(Zk / (2.0 * sqrt_dt))
 
             # 瞬态项 Ptran2
-            Ptran2 = np.zeros(n_cells, dtype=np.float64)
+            Ptran2 = np.zeros(n_valid, dtype=np.float64)
             for i in range(N - 1):
                 delta_t = Tk - t[i + 1]
                 if delta_t <= 0:
                     break
-                sqrt_dt = np.sqrt(np.maximum(D1, 1e-15) * delta_t)
-                Ptran2 += (2.0 * Inz2[:, i] / Ks_1d) * sqrt_dt * _ierfc(Zk / (2.0 * sqrt_dt))
+                sqrt_dt = np.sqrt(np.maximum(D1_v, 1e-15) * delta_t)
+                Ptran2 += (2.0 * Inz2_v[:, i] / Ks_v) * sqrt_dt * _ierfc(Zk / (2.0 * sqrt_dt))
 
             Ptran = Ptran1 - Ptran2
-            GW1 = np.minimum(Ptran + Pzera, Zk * beta)
+            GW1 = np.minimum(Ptran + Pzera, Zk * beta_v)
 
             # 含水率
-            tk = np.where(GW1 >= 0, porosity,
-                          theta_r + (porosity - theta_r) * np.exp(GW1 / alpha_vg))
-            Theta_layer[:, k] = np.clip(tk, theta_r, porosity)
+            tk = np.where(GW1 >= 0, porosity_v,
+                          theta_r + (porosity_v - theta_r) * np.exp(GW1 / alpha_vg))
+            Theta_v[:, k] = np.clip(tk, theta_r, porosity_v)
 
             # 无限斜坡 FS
-            tan_phi = np.tan(f_1d * np.pi / 180.0)
-            denom = Ys_1d * Zk * np.sin(r_slope) * np.cos(r_slope)
+            tan_phi = np.tan(f_v * np.pi / 180.0)
+            denom = Ys_v * Zk * np.sin(slope_v) * np.cos(slope_v)
             denom[denom == 0] = 1e-15
-            Fs2[:, k] = tan_phi / np.tan(r_slope) + (c_1d - GW1 * Yw_1d * tan_phi) / denom
-            Pdepth[:, k] = GW1
+            Fs2_v[:, k] = tan_phi / np.tan(slope_v) + (c_v - GW1 * Yw_v * tan_phi) / denom
+            Pdepth_v[:, k] = GW1
 
         # 向量化：取每个有效像元的最小 FS 层
         FS_out = np.full(n_cells, np.nan, dtype=np.float64)
@@ -369,10 +379,10 @@ def run_trigrs(time_nodes, rain_path, temp_3d, t,
         Zz     = np.full(n_cells, np.nan, dtype=np.float64)
         Tmin   = np.full(n_cells, np.nan, dtype=np.float64)
 
-        fsv = Fs2[valid_idx]        # (n_valid, Zbin)
-        pdv = Pdepth[valid_idx]
-        thv = Theta_layer[valid_idx]
-        z1v = Z1[valid_idx]
+        fsv = Fs2_v
+        pdv = Pdepth_v
+        thv = Theta_v
+        z1v = Z_valid
 
         # 处理全 NaN 行的 nanargmin
         has_data = ~np.all(np.isnan(fsv), axis=1)
@@ -389,10 +399,10 @@ def run_trigrs(time_nodes, rain_path, temp_3d, t,
         clip_mask = min_fs > 10.0
         min_fs_clipped = np.where(clip_mask, 10.0, min_fs)
 
-        FS_out[valid_idx] = min_fs_clipped
-        Zz[valid_idx]     = np.where(clip_mask, 0.005, z1v[np.arange(n_valid), min_idx])
-        Phead[valid_idx]  = np.where(clip_mask, pdv[:, 0], pdv[np.arange(n_valid), min_idx])
-        Tmin[valid_idx]   = np.where(clip_mask, thv[:, 0], thv[np.arange(n_valid), min_idx])
+        FS_out[v] = min_fs_clipped
+        Zz[v]     = np.where(clip_mask, 0.005, z1v[np.arange(n_valid), min_idx])
+        Phead[v]  = np.where(clip_mask, pdv[:, 0], pdv[np.arange(n_valid), min_idx])
+        Tmin[v]   = np.where(clip_mask, thv[:, 0], thv[np.arange(n_valid), min_idx])
 
         Phead_all[:, :, kt] = Phead.reshape(w1, w2)
         ZMAX_all[:, :, kt]  = Zz.reshape(w1, w2)
@@ -401,5 +411,5 @@ def run_trigrs(time_nodes, rain_path, temp_3d, t,
 
         print(f"  时间点 {kt+1}/{nt} (Tk={Tk:.0f}s)", flush=True)
 
-    print(f"  numba JIT: {_numba_ok}")
+
     return Phead_all, ZMAX_all, Fs_all, Theta_all
