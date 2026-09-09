@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.Data;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.http.ResponseEntity;
 
 
@@ -75,6 +76,12 @@ public class AdminUserController {
     private String transformerScript;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    @Value("${app.avaflow.wsl-home:\\\\\\\\wsl.localhost\\Ubuntu-20.04\\home\\wm}")
+    private String avaflowWslHome;
+
+    @Value("${app.avaflow.static-dir:D:/practice/nginx-1.24.0/html}")
+    private String avaflowStaticDir;
 
     @Value("${app.process-timeout:600}")
     private long processTimeoutSeconds;
@@ -874,6 +881,123 @@ public class AdminUserController {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
+    }
+
+    @PostMapping("/upload_avaflow")
+    public ResponseEntity<?> uploadAvaflow(@RequestParam("files") MultipartFile[] files) {
+        if (files == null || files.length == 0) {
+            return ResponseEntity.badRequest().body("缺少文件");
+        }
+        try {
+            File dir = new File(avaflowWslHome, "DATA1");
+            if (!dir.exists()) dir.mkdirs();
+            for (MultipartFile f : files) {
+                String name = f.getOriginalFilename();
+                if (name != null && !name.isEmpty()) {
+                    f.transferTo(new File(dir, name));
+                }
+            }
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("status", "ok");
+            resp.put("message", "上传成功: " + dir.getAbsolutePath());
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("上传失败: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/yj_beta")
+    public ResponseEntity<?> runAvaflowBeta(@RequestBody Map<String, Object> body) {
+        try {
+            String area = str(body, "area");
+            String prefix = "beta_" + (area == null || area.isEmpty() ? "area" : area) + "_" + System.currentTimeMillis();
+            String phases = (str(body, "phases") == null || str(body, "phases").isEmpty()) ? "3" : str(body, "phases");
+            String cf = str(body, "cf");
+            String bf = str(body, "bf");
+            String ff = str(body, "ff");
+
+            // 1) 生成 start_beta.sh（基于 upload 到 DATA1 的文件 + 表单参数）
+            String startScript = buildStartScript(prefix, phases, cf, bf, ff);
+            File startFile = new File(avaflowWslHome, "start_beta.sh");
+            Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
+
+            // 2) WSL 执行
+            String wslHome = avaflowWslHome.replace("\\\\", "//").replace("\\", "/");
+            // UNCs: \wsl.localhost\Ubuntu-20.04\home\wm -> /mnt/... ? 直接用 wsl 内路径约定
+            String linuxHome = toLinuxPath(avaflowWslHome);
+            ProcessResult pr = runProcess(
+                    Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
+                            "cd " + linuxHome + " && chmod +x start_beta.sh && ./start_beta.sh"),
+                    null, processTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
+            if (pr.exitCode != 0) {
+                return ResponseEntity.internalServerError().body("avaflow 执行失败，退出码：" + pr.exitCode + "\n" + pr.output);
+            }
+
+            // 3) 转换 hflow_max*.asc -> GeoJSON（落到静态目录）
+            String asciiDir = new File(avaflowWslHome, prefix + "_results/" + prefix + "_ascii").getPath();
+            Map<String, Object> conv = convertAvaflowFrames(asciiDir, prefix, avaflowStaticDir);
+
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("status", "ok");
+            resp.put("outputBase", conv.get("outputBase"));
+            resp.put("frameCount", conv.get("frameCount"));
+            resp.put("message", "洪水泥石流启动动力学模型_beta 完成，输出 " + conv.get("frameCount") + " 帧");
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+
+    /** 将 Windows UNC 路径转为 WSL 内路径： \\wsl.localhost\Ubuntu-20.04\home\wm -> /home/wm */
+    private String toLinuxPath(String p) {
+        String s = p.replace("\\\\wsl.localhost\\", "").replace("\\\\wsl$\\", "");
+        // drop distro name segment if present (Ubuntu-20.04)
+        if (s.startsWith("Ubuntu-20.04")) s = s.substring("Ubuntu-20.04".length());
+        // convert backslashes
+        return s.replace("\\", "/");
+    }
+
+    private String buildStartScript(String prefix, String phases, String cf, String bf, String ff) {
+        String friction = cf + "," + bf + "," + ff + ",0,0,0,0,0,0.05";
+        String profile = "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835";
+        StringBuilder sb = new StringBuilder();
+        sb.append("# r.avaflow beta script (auto-generated)\n");
+        sb.append("r.in.gdal -o --overwrite input=DATA1/elev.tif output=bh_elev\n");
+        sb.append("r.in.gdal -o --overwrite input=DATA1/debris.tif output=bh_debrisflow\n");
+        sb.append("r.in.gdal -o --overwrite input=DATA1/impact_area.tif output=bh_impactarea\n");
+        sb.append("g.region -s rast=bh_elev\n");
+        sb.append("r.avaflow.40G prefix=" + prefix + " phases=" + phases + " elevation=bh_elev hrelease=bh_debrisflow rhrelease1=0.8 friction=" + friction + " time=10,400 impactarea=bh_impactarea profile=" + profile + " visualization=0,1.0,5.0,5.0,1,200,5,0,3000,50,0.30,0.30,0.60,0.2,1.0,None,None,None\n");
+        sb.append("g.region -d\n");
+        return sb.toString();
+    }
+
+    private Map<String, Object> convertAvaflowFrames(String asciiDir, String prefix, String staticDir) {
+        Map<String, Object> out = new HashMap<>();
+        File dir = new File(asciiDir);
+        File[] files = dir.listFiles((d, name) -> name.matches(prefix + "_hflow_max\\d{4}\\.asc"));
+        int count = 0;
+        String outputBase = avaflowStaticDir + "/avaflow_beta";
+        if (files != null && files.length > 0) {
+            java.util.Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
+            File outDir = new File(outputBase);
+            if (!outDir.exists()) outDir.mkdirs();
+            // 复用 AscToGeoJSONConverter 逐个转换
+            for (File f : files) {
+                int idx = count + 1;
+                File geo = new File(outDir, "avaflow_output" + idx + ".geojson");
+                try {
+                    AscToGeoJSONConverter.convert(f, geo);
+                } catch (Exception e) {
+                    System.err.println("转换失败: " + f.getName() + " -> " + e.getMessage());
+                }
+                count++;
+            }
+        }
+        out.put("frameCount", count);
+        out.put("outputBase", "/ng/avaflow_beta");
+        return out;
     }
 
     /**

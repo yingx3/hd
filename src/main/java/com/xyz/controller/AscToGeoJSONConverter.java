@@ -41,6 +41,11 @@ private static final CRSFactory crsFactory = new CRSFactory();
         }
     }
 
+    // 供外部调用：单个 ASC -> GeoJSON
+    public static void convert(File ascFile, File geoJsonFile) throws Exception {
+        processSingleFile(ascFile, geoJsonFile);
+    }
+
     // 封装单个文件处理逻辑
     private static void processSingleFile(File ascFile, File geoJsonFile) throws Exception {
         AscMetadata metadata = parseAscHeader(ascFile);
