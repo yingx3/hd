@@ -748,7 +748,6 @@ public class AdminUserController {
         String tempPath = body.containsKey("temp_path") ? body.get("temp_path").toString() : projectRoot + "/suanfa/SDP_Start/tem_tif";
         String outputDir = body.containsKey("output_dir") ? body.get("output_dir").toString() : projectRoot + "/data/SDP_Results";
         double iceContent = body.containsKey("ice_content") ? Double.parseDouble(body.get("ice_content").toString()) : 0.2;
-        double zmaxBoost = body.containsKey("zmax_boost") ? Double.parseDouble(body.get("zmax_boost").toString()) : 0.0;
         String tempPattern = body.containsKey("temp_pattern") ? body.get("temp_pattern").toString() : "temp_%d.tif";
 
         try {
@@ -758,8 +757,7 @@ public class AdminUserController {
                             "--temp_path", tempPath,
                             "--output_dir", outputDir,
                             "--ice_content", String.valueOf(iceContent),
-                            "--temp_pattern", tempPattern,
-                            "--zmax_boost", String.valueOf(zmaxBoost)),
+                            "--temp_pattern", tempPattern),
                     new File(projectRoot), processTimeoutSeconds, "SDP Python: ", Charset.forName("GBK"));
             if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("run.py 执行失败，退出码：" + pr.exitCode);

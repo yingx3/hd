@@ -90,10 +90,8 @@ class bedding():
         fos = self.factor_of_safety(t)
         # 输出完整数组（无省略、无格式、Java可直接解析）
         data = {
-            "t": t.tolist(),
-            "fos": fos.tolist(),
-            "iceVolume": float(self.vf),
-            "debrisVolume": float(self.vf * 3.0)
+        "t": t.tolist(),
+        "fos": fos.tolist()
         }
         # 写入静态文件（兼容旧版前端）
         os.makedirs('src/main/resources/static', exist_ok=True)
