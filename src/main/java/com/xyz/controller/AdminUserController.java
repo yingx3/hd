@@ -84,6 +84,8 @@ public class AdminUserController {
     private String avaflowWslLinuxHome;
     @Value("${app.avaflow.grass-gisdbase:/home/wm/grassdata/demo1/PERMANENT}")
     private String avaflowGrassGisdbase;
+    @Value("${app.avaflow.timeout:1800}")
+    private long avaflowTimeoutSeconds;
 
     @Value("${app.avaflow.static-dir:E:/softwares/nginx-1.26.2/nginx-1.26.2/html}")
     private String avaflowStaticDir;
@@ -933,7 +935,7 @@ public class AdminUserController {
             ProcessResult pr = runProcess(
                     Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
                             "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && grass " + avaflowGrassGisdbase + " --exec bash ./start_beta.sh"),
-                    null, processTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
+                    null, avaflowTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
             if (pr.exitCode != 0) {
                 return ResponseEntity.internalServerError().body("avaflow 执行失败，退出码：" + pr.exitCode + "\n" + pr.output);
             }
