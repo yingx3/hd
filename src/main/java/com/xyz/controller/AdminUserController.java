@@ -85,7 +85,7 @@ public class AdminUserController {
     @Value("${app.avaflow.grass-gisdbase:/home/wm/grassdata/demo1/PERMANENT}")
     private String avaflowGrassGisdbase;
 
-    @Value("${app.avaflow.static-dir:D:/practice/nginx-1.24.0/html}")
+    @Value("${app.avaflow.static-dir:E:/softwares/nginx-1.26.2/nginx-1.26.2/html}")
     private String avaflowStaticDir;
 
     @Value("${app.process-timeout:600}")
@@ -923,7 +923,7 @@ public class AdminUserController {
             String ff = str(body, "ff");
 
             // 1) 生成 start_beta.sh（基于 upload 到 DATA1 的文件 + 表单参数）
-            String startScript = buildStartScript(prefix, phases, cf, bf, ff);
+            String startScript = buildStartScript(prefix);
             File startFile = new File(avaflowWslHome, "start_beta.sh");
             Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
 
@@ -963,19 +963,23 @@ public class AdminUserController {
         return s.replace("\\", "/");
     }
 
-    private String buildStartScript(String prefix, String phases, String cf, String bf, String ff) {
-        String friction = cf + "," + bf + "," + ff + ",0,0,0,0,0,0.05";
-        String profile = "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835";
+    private String buildStartScript(String prefix) {
+        // 使用 start.sh(BH02_45_15_15_0) 的有效默认参数集
         StringBuilder sb = new StringBuilder();
         sb.append("# r.avaflow beta script (auto-generated)\n");
         sb.append("r.in.gdal -o --overwrite input=DATA1/elev.tif output=bh_elev\n");
         sb.append("r.in.gdal -o --overwrite input=DATA1/debris.tif output=bh_debrisflow\n");
         sb.append("r.in.gdal -o --overwrite input=DATA1/impact_area.tif output=bh_impactarea\n");
         sb.append("g.region -s rast=bh_elev\n");
-        sb.append("r.avaflow.40G prefix=" + prefix + " phases=" + phases + " elevation=bh_elev hrelease=bh_debrisflow rhrelease1=0.8 friction=" + friction + " time=10,400 impactarea=bh_impactarea profile=" + profile + " visualization=0,1.0,5.0,5.0,1,200,5,0,3000,50,0.30,0.30,0.60,0.2,1.0,None,None,None\n");
+        sb.append("r.avaflow.40G prefix=" + prefix
+                + " phases=3 elevation=bh_elev hrelease=bh_debrisflow rhrelease1=0.8"
+                + " friction=15,0,0,15,0,0,0,0,0.05 time=10,400 impactarea=bh_impactarea"
+                + " profile=159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"
+                + " visualization=0,1.0,5.0,5.0,1,200,5,0,3000,50,0.30,0.30,0.60,0.2,1.0,None,None,None\n");
         sb.append("g.region -d\n");
         return sb.toString();
     }
+
 
     private Map<String, Object> convertAvaflowFrames(String asciiDir, String prefix, String staticDir) {
         Map<String, Object> out = new HashMap<>();
