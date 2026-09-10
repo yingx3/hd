@@ -90,6 +90,8 @@ public class AdminUserController {
     @Value("${app.avaflow.static-dir:E:/softwares/nginx-1.26.2/nginx-1.26.2/html}")
     private String avaflowStaticDir;
 
+    private static final java.util.concurrent.ConcurrentHashMap<String, Map<String, Object>> avaflowJobs = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Value("${app.process-timeout:600}")
     private long processTimeoutSeconds;
 
@@ -916,45 +918,72 @@ public class AdminUserController {
 
     @PostMapping("/yj_beta")
     public ResponseEntity<?> runAvaflowBeta(@RequestBody Map<String, Object> body) {
-        try {
-            String area = str(body, "area");
-            String prefix = "beta_" + (area == null || area.isEmpty() ? "area" : area) + "_" + System.currentTimeMillis();
-            String phases = (str(body, "phases") == null || str(body, "phases").isEmpty()) ? "3" : str(body, "phases");
-            String cf = str(body, "cf");
-            String bf = str(body, "bf");
-            String ff = str(body, "ff");
+        String area = str(body, "area");
+        String prefix = "beta_" + (area == null || area.isEmpty() ? "area" : area) + "_" + System.currentTimeMillis();
+        String jobId = "avaflow_" + System.currentTimeMillis() + "_" + (int) (Math.random() * 1000);
+        Map<String, Object> job = new java.util.concurrent.ConcurrentHashMap<>();
+        job.put("status", "running");
+        job.put("message", "r.avaflow 计算中（约数分钟~十余分钟）...");
+        job.put("startedAt", System.currentTimeMillis());
+        avaflowJobs.put(jobId, job);
 
-            // 1) 生成 start_beta.sh（基于 upload 到 DATA1 的文件 + 表单参数）
-            String startScript = buildStartScript(prefix);
-            File startFile = new File(avaflowWslHome, "start_beta.sh");
-            Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
+        final String fPrefix = prefix;
+        new Thread(() -> {
+            try {
+                String startScript = buildStartScript(fPrefix);
+                File startFile = new File(avaflowWslHome, "start_beta.sh");
+                Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
 
-            // 2) WSL 执行
-            String wslHome = avaflowWslHome.replace("\\\\", "//").replace("\\", "/");
-            // UNCs: \wsl.localhost\Ubuntu-20.04\home\wm -> /mnt/... ? 直接用 wsl 内路径约定
-            ProcessResult pr = runProcess(
-                    Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
-                            "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && grass " + avaflowGrassGisdbase + " --exec bash ./start_beta.sh"),
-                    null, avaflowTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
-            if (pr.exitCode != 0) {
-                return ResponseEntity.internalServerError().body("avaflow 执行失败，退出码：" + pr.exitCode + "\n" + pr.output);
+                ProcessResult pr = runProcess(
+                        Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
+                                "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && grass " + avaflowGrassGisdbase + " --exec bash ./start_beta.sh"),
+                        null, avaflowTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
+                if (pr.exitCode != 0) {
+                    job.put("status", "error");
+                    job.put("message", "avaflow 执行失败，退出码：" + pr.exitCode);
+                    job.put("log", tail(pr.output, 1500));
+                    return;
+                }
+                String asciiDir = new File(avaflowWslHome, fPrefix + "_results/" + fPrefix + "_ascii").getPath();
+                Map<String, Object> conv = convertAvaflowFrames(asciiDir, fPrefix, avaflowStaticDir);
+                int fc = ((Number) conv.get("frameCount")).intValue();
+                if (fc <= 0) {
+                    job.put("status", "error");
+                    job.put("message", "未找到输出帧(hflowNNNN.asc)");
+                    return;
+                }
+                job.put("status", "done");
+                job.put("outputBase", conv.get("outputBase"));
+                job.put("frameCount", fc);
+                job.put("message", "完成，输出 " + fc + " 帧");
+            } catch (Exception e) {
+                job.put("status", "error");
+                job.put("message", "Error: " + e.getMessage());
             }
+        }, "avaflow-beta-" + jobId).start();
 
-            // 3) 转换 hflow_max*.asc -> GeoJSON（落到静态目录）
-            String asciiDir = new File(avaflowWslHome, prefix + "_results/" + prefix + "_ascii").getPath();
-            Map<String, Object> conv = convertAvaflowFrames(asciiDir, prefix, avaflowStaticDir);
-
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("status", "ok");
-            resp.put("outputBase", conv.get("outputBase"));
-            resp.put("frameCount", conv.get("frameCount"));
-            resp.put("message", "洪水泥石流启动动力学模型_beta 完成，输出 " + conv.get("frameCount") + " 帧");
-            return ResponseEntity.ok(resp);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
-        }
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("status", "accepted");
+        resp.put("jobId", jobId);
+        resp.put("message", "已启动，请轮询状态获取结果");
+        return ResponseEntity.ok(resp);
     }
+
+    @GetMapping("/yj_beta_status")
+    public ResponseEntity<?> yjBetaStatus(@RequestParam("jobId") String jobId) {
+        Map<String, Object> job = avaflowJobs.get(jobId);
+        if (job == null) {
+            return ResponseEntity.status(404).body("未知任务: " + jobId);
+        }
+        return ResponseEntity.ok(job);
+    }
+
+    private String tail(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(s.length() - max);
+    }
+
+
 
     /** 将 Windows UNC 路径转为 WSL 内路径： \\wsl.localhost\Ubuntu-20.04\home\wm -> /home/wm */
     private String toLinuxPath(String p) {
