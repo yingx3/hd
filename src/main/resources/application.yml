@@ -16,3 +16,26 @@ spring:
 #   static-dir: ../nginx/html                   # PNG输出目录
 #   python-exe: python/python.exe               # 嵌入式Python路径
 #   conda-python-exe: D:/application/miniconda3/envs/geocompy/python.exe  # DL模型Python
+
+# 洪水泥石流启动动力学模型_beta / r.avaflow(avaflow) 配置
+app:
+  avaflow:
+    # Windows 访问 WSL 的根目录（用正斜杠 UNC）
+    wsl-home: //wsl.localhost/Ubuntu-20.04/home/wm
+    # WSL 内路径（wsl 命令 cd 用）
+    wsl-linux-home: /home/wm
+    # GRASS GIS location/mapset
+    grass-gisdbase: /home/wm/grassdata/demo1/PERMANENT
+    # GeoJSON 输出目录（nginx html 根，前端 /ng 可访问）
+    static-dir: E:/softwares/nginx-1.26.2/nginx-1.26.2/html
+    # 执行超时（秒）
+    timeout: 1800
+    # r.avaflow 参数（默认即 WSL start.sh 的 BH02 实验参数）
+    phases: 3
+    friction: "15,0,0,15,0,0,0,0,0.05"
+    time: "10,400"
+    expected-frames: 41
+    # 默认滑移路径 profile；按区域配置：在同级写 profile.巴宜区 / profile.波密县
+    profile: "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"
+    # profile.巴宜区: "..."
+    # profile.波密县: "..."

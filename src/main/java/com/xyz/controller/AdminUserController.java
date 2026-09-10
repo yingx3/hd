@@ -87,6 +87,24 @@ public class AdminUserController {
     @Value("${app.avaflow.timeout:1800}")
     private long avaflowTimeoutSeconds;
 
+    @Value("${app.avaflow.phases:3}")
+    private String avaflowPhases;
+
+    @Value("${app.avaflow.friction:15,0,0,15,0,0,0,0,0.05}")
+    private String avaflowFriction;
+
+    @Value("${app.avaflow.time:10,400}")
+    private String avaflowTime;
+
+    @Value("${app.avaflow.profile:159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835}")
+    private String avaflowProfileDefault;
+
+    @Value("${app.avaflow.expected-frames:41}")
+    private int avaflowExpectedFrames;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.core.env.Environment env;
+
     @Value("${app.avaflow.static-dir:E:/softwares/nginx-1.26.2/nginx-1.26.2/html}")
     private String avaflowStaticDir;
 
@@ -927,10 +945,11 @@ public class AdminUserController {
         job.put("startedAt", System.currentTimeMillis());
         avaflowJobs.put(jobId, job);
 
+        job.put("prefix", prefix);
         final String fPrefix = prefix;
         new Thread(() -> {
             try {
-                String startScript = buildStartScript(fPrefix);
+                String startScript = buildStartScript(fPrefix, area);
                 File startFile = new File(avaflowWslHome, "start_beta.sh");
                 Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
 
@@ -975,6 +994,16 @@ public class AdminUserController {
         if (job == null) {
             return ResponseEntity.status(404).body("未知任务: " + jobId);
         }
+        if ("running".equals(job.get("status"))) {
+            String prefix = (String) job.get("prefix");
+            if (prefix != null) {
+                File asciiDir = new File(avaflowWslHome, prefix + "_results/" + prefix + "_ascii");
+                File[] fr = asciiDir.listFiles((d, name) -> name.matches(prefix + "_hflow\\d{4}\\.asc"));
+                int frames = fr == null ? 0 : fr.length;
+                job.put("frames", frames);
+                job.put("progress", Math.min(99, (int) Math.round(frames * 100.0 / Math.max(1, avaflowExpectedFrames))));
+            }
+        }
         return ResponseEntity.ok(job);
     }
 
@@ -994,7 +1023,7 @@ public class AdminUserController {
         return s.replace("\\", "/");
     }
 
-    private String buildStartScript(String prefix) {
+    private String buildStartScript(String prefix, String area) {
         // 使用 start.sh(BH02_45_15_15_0) 的有效默认参数集
         StringBuilder sb = new StringBuilder();
         sb.append("# r.avaflow beta script (auto-generated)\n");
@@ -1002,10 +1031,16 @@ public class AdminUserController {
         sb.append("r.in.gdal -o --overwrite input=DATA1/debris.tif output=bh_debrisflow\n");
         sb.append("r.in.gdal -o --overwrite input=DATA1/impact_area.tif output=bh_impactarea\n");
         sb.append("g.region -s rast=bh_elev\n");
+        String areaKey = (area == null || area.isEmpty()) ? "default" : area;
+        String profile = env.getProperty("app.avaflow.profile." + areaKey,
+                env.getProperty("app.avaflow.profile", avaflowProfileDefault));
+        String friction = env.getProperty("app.avaflow.friction", avaflowFriction);
+        String time = env.getProperty("app.avaflow.time", avaflowTime);
+        String phases = env.getProperty("app.avaflow.phases", avaflowPhases);
         sb.append("r.avaflow.40G prefix=" + prefix
-                + " phases=3 elevation=bh_elev hrelease=bh_debrisflow rhrelease1=0.8"
-                + " friction=15,0,0,15,0,0,0,0,0.05 time=10,400 impactarea=bh_impactarea"
-                + " profile=159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"
+                + " phases=" + phases + " elevation=bh_elev hrelease=bh_debrisflow rhrelease1=0.8"
+                + " friction=" + friction + " time=" + time + " impactarea=bh_impactarea"
+                + " profile=" + profile
                 + " visualization=0,1.0,5.0,5.0,1,200,5,0,3000,50,0.30,0.30,0.60,0.2,1.0,None,None,None\n");
         sb.append("g.region -d\n");
         return sb.toString();
