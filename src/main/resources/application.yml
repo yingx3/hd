@@ -24,6 +24,8 @@ app:
     wsl-home: //wsl.localhost/Ubuntu-20.04/home/wm
     # WSL 内路径（wsl 命令 cd 用）
     wsl-linux-home: /home/wm
+    jobs-root: //wsl.localhost/Ubuntu-20.04/home/wm/avaflow_jobs
+    source-crs: EPSG:32647
     # GRASS GIS location/mapset
     grass-gisdbase: /home/wm/grassdata/demo1/PERMANENT
     # GeoJSON 输出目录（nginx html 根，前端 /ng 可访问）

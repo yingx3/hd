@@ -82,6 +82,12 @@ public class AdminUserController {
 
     @Value("${app.avaflow.wsl-linux-home:/home/wm}")
     private String avaflowWslLinuxHome;
+
+    @Value("${app.avaflow.jobs-root://wsl.localhost/Ubuntu-20.04/home/wm/avaflow_jobs}")
+    private String avaflowJobsRoot;
+
+    @Value("${app.avaflow.source-crs:EPSG:32647}")
+    private String avaflowSourceCrs;
     @Value("${app.avaflow.grass-gisdbase:/home/wm/grassdata/demo1/PERMANENT}")
     private String avaflowGrassGisdbase;
     @Value("${app.avaflow.timeout:1800}")
@@ -911,72 +917,127 @@ public class AdminUserController {
     }
 
     @PostMapping("/upload_avaflow")
-    public ResponseEntity<?> uploadAvaflow(@RequestParam("files") MultipartFile[] files) {
+    public ResponseEntity<?> uploadAvaflow(
+            @RequestParam("files") MultipartFile[] files,
+            @RequestParam(value = "jobId", required = false) String requestedJobId) {
         if (files == null || files.length == 0) {
-            return ResponseEntity.badRequest().body("缺少文件");
+            return ResponseEntity.badRequest().body("\u7f3a\u5c11\u6587\u4ef6");
         }
         try {
-            File dir = new File(avaflowWslHome, "DATA1");
-            if (!dir.exists()) dir.mkdirs();
+            String jobId = requestedJobId == null || requestedJobId.trim().isEmpty()
+                    ? newAvaflowJobId()
+                    : requireAvaflowJobId(requestedJobId);
+            File inputDir = new File(new File(avaflowJobsRoot, jobId), "inputs");
+            Files.createDirectories(inputDir.toPath());
+
             for (MultipartFile f : files) {
                 String name = f.getOriginalFilename();
-                if (name != null && !name.isEmpty()) {
-                    f.transferTo(new File(dir, name));
+                if (name == null || name.trim().isEmpty()) continue;
+                File target = new File(inputDir, Paths.get(name).getFileName().toString());
+                f.transferTo(target);
+            }
+
+            List<String> required = Arrays.asList("elev.tif", "debris.tif", "impact_area.tif");
+            for (String name : required) {
+                File target = new File(inputDir, name);
+                if (!target.isFile() || target.length() == 0) {
+                    return ResponseEntity.badRequest().body("\u7f3a\u5c11\u8f93\u5165\u6587\u4ef6: " + name);
                 }
             }
+
             Map<String, Object> resp = new HashMap<>();
             resp.put("status", "ok");
-            resp.put("message", "上传成功: " + dir.getAbsolutePath());
+            resp.put("jobId", jobId);
+            resp.put("message", "\u4e0a\u4f20\u6210\u529f");
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             e.printStackTrace();
-            return ResponseEntity.internalServerError().body("上传失败: " + e.getMessage());
+            return ResponseEntity.internalServerError().body("\u4e0a\u4f20\u5931\u8d25: " + e.getMessage());
         }
     }
 
     @PostMapping("/yj_beta")
     public ResponseEntity<?> runAvaflowBeta(@RequestBody Map<String, Object> body) {
+        final String jobId;
+        try {
+            jobId = requireAvaflowJobId(str(body, "jobId"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+
+        File jobDir = new File(avaflowJobsRoot, jobId);
+        File inputDir = new File(jobDir, "inputs");
+        for (String name : Arrays.asList("elev.tif", "debris.tif", "impact_area.tif")) {
+            File required = new File(inputDir, name);
+            if (!required.isFile() || required.length() == 0) {
+                return ResponseEntity.badRequest().body("\u4efb\u52a1\u8f93\u5165\u4e0d\u5b8c\u6574: " + name);
+            }
+        }
+
         String area = str(body, "area");
-        String prefix = "beta_" + (area == null || area.isEmpty() ? "area" : area) + "_" + System.currentTimeMillis();
-        String jobId = "avaflow_" + System.currentTimeMillis() + "_" + (int) (Math.random() * 1000);
+        String prefix = "beta_" + jobId;
         Map<String, Object> job = new java.util.concurrent.ConcurrentHashMap<>();
+        job.put("jobId", jobId);
+        job.put("prefix", prefix);
         job.put("status", "running");
-        job.put("message", "r.avaflow 计算中（约数分钟~十余分钟）...");
+        job.put("phase", "simulation");
+        job.put("progress", 0);
+        job.put("frames", 0);
+        job.put("expectedFrames", avaflowExpectedFrames);
+        job.put("message", "r.avaflow ???...");
         job.put("startedAt", System.currentTimeMillis());
         avaflowJobs.put(jobId, job);
 
-        job.put("prefix", prefix);
-        final String fPrefix = prefix;
         new Thread(() -> {
             try {
-                String startScript = buildStartScript(fPrefix, area);
-                File startFile = new File(avaflowWslHome, "start_beta.sh");
+                String jobDirLinux = toLinuxPath(jobDir.getAbsolutePath());
+                String scriptPathLinux = jobDirLinux + "/start_beta.sh";
+                String startScript = buildStartScript(prefix, area, jobDirLinux, jobId);
+                File startFile = new File(jobDir, "start_beta.sh");
                 Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
 
                 ProcessResult pr = runProcess(
                         Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
-                                "cd " + avaflowWslLinuxHome + " && chmod +x start_beta.sh && grass " + avaflowGrassGisdbase + " --exec bash ./start_beta.sh"),
+                                "cd " + shellQuote(avaflowWslLinuxHome)
+                                        + " && chmod +x " + shellQuote(scriptPathLinux)
+                                        + " && grass " + shellQuote(avaflowGrassGisdbase)
+                                        + " --exec bash " + shellQuote(scriptPathLinux)),
                         null, avaflowTimeoutSeconds, "[avaflow_beta] ", StandardCharsets.UTF_8);
                 if (pr.exitCode != 0) {
                     job.put("status", "error");
-                    job.put("message", "avaflow 执行失败，退出码：" + pr.exitCode);
+                    job.put("phase", "error");
+                    job.put("message", "avaflow \u6267\u884c\u5931\u8d25, \u9000\u51fa\u7801: " + pr.exitCode);
                     job.put("log", tail(pr.output, 1500));
                     return;
                 }
-                String asciiDir = new File(avaflowWslHome, fPrefix + "_results/" + fPrefix + "_ascii").getPath();
-                Map<String, Object> conv = convertAvaflowFrames(asciiDir, fPrefix, avaflowStaticDir);
-                int fc = ((Number) conv.get("frameCount")).intValue();
-                if (fc <= 0) {
+
+                job.put("phase", "converting");
+                job.put("progress", 85);
+                job.put("message", "\u6a21\u578b\u8ba1\u7b97\u5b8c\u6210, \u6b63\u5728\u8f6c\u6362 GeoJSON...");
+
+                String asciiDir = new File(
+                        new File(avaflowWslHome, prefix + "_results"),
+                        prefix + "_ascii").getPath();
+                Map<String, Object> conv = convertAvaflowFrames(
+                        asciiDir, prefix, avaflowStaticDir, jobId, avaflowSourceCrs);
+                int frameCount = ((Number) conv.get("frameCount")).intValue();
+                if (frameCount <= 0) {
                     job.put("status", "error");
-                    job.put("message", "未找到输出帧(hflowNNNN.asc)");
+                    job.put("phase", "error");
+                    job.put("message", "\u672a\u627e\u5230\u8f93\u51fa\u5e27(hflowNNNN.asc)");
                     return;
                 }
+
                 job.put("status", "done");
+                job.put("phase", "done");
+                job.put("progress", 100);
                 job.put("outputBase", conv.get("outputBase"));
-                job.put("frameCount", fc);
-                job.put("message", "完成，输出 " + fc + " 帧");
+                job.put("frameCount", frameCount);
+                job.put("bbox", conv.get("bbox"));
+                job.put("message", "\u5b8c\u6210, \u8f93\u51fa " + frameCount + " \u5e27");
             } catch (Exception e) {
                 job.put("status", "error");
+                job.put("phase", "error");
                 job.put("message", "Error: " + e.getMessage());
             }
         }, "avaflow-beta-" + jobId).start();
@@ -984,7 +1045,7 @@ public class AdminUserController {
         Map<String, Object> resp = new HashMap<>();
         resp.put("status", "accepted");
         resp.put("jobId", jobId);
-        resp.put("message", "已启动，请轮询状态获取结果");
+        resp.put("message", "\u5df2\u542f\u52a8, \u8bf7\u8f6e\u8be2\u72b6\u6001\u83b7\u53d6\u7ed3\u679c");
         return ResponseEntity.ok(resp);
     }
 
@@ -992,19 +1053,45 @@ public class AdminUserController {
     public ResponseEntity<?> yjBetaStatus(@RequestParam("jobId") String jobId) {
         Map<String, Object> job = avaflowJobs.get(jobId);
         if (job == null) {
-            return ResponseEntity.status(404).body("未知任务: " + jobId);
+            return ResponseEntity.status(404).body("\u672a\u77e5\u4efb\u52a1: " + jobId);
         }
         if ("running".equals(job.get("status"))) {
+            if ("simulation".equals(job.get("phase"))) {
             String prefix = (String) job.get("prefix");
             if (prefix != null) {
-                File asciiDir = new File(avaflowWslHome, prefix + "_results/" + prefix + "_ascii");
-                File[] fr = asciiDir.listFiles((d, name) -> name.matches(prefix + "_hflow\\d{4}\\.asc"));
-                int frames = fr == null ? 0 : fr.length;
-                job.put("frames", frames);
-                job.put("progress", Math.min(99, (int) Math.round(frames * 100.0 / Math.max(1, avaflowExpectedFrames))));
+                File asciiDir = new File(
+                        new File(avaflowWslHome, prefix + "_results"),
+                        prefix + "_ascii");
+                File[] frames = asciiDir.listFiles((d, name) -> name.matches(prefix + "_hflow\\d{4}\\.asc"));
+                int frameCount = frames == null ? 0 : frames.length;
+                job.put("frames", frameCount);
+                int progress = Math.min(85, (int) Math.round(frameCount * 85.0 / Math.max(1, avaflowExpectedFrames)));
+                job.put("progress", progress);
+            }
+            }
+            Object startedAt = job.get("startedAt");
+            if (startedAt instanceof Number) {
+                job.put("elapsedSeconds", (System.currentTimeMillis() - ((Number) startedAt).longValue()) / 1000);
             }
         }
         return ResponseEntity.ok(job);
+    }
+
+    private String newAvaflowJobId() {
+        return "avaflow_" + System.currentTimeMillis() + "_"
+                + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    }
+
+    private String requireAvaflowJobId(String value) {
+        String jobId = value == null ? "" : value.trim();
+        if (!jobId.matches("[A-Za-z0-9_-]{1,96}")) {
+            throw new IllegalArgumentException("\u65e0\u6548\u7684\u4efb\u52a1ID");
+        }
+        return jobId;
+    }
+
+    private String shellQuote(String value) {
+        return "'" + (value == null ? "" : value.replace("'", "'\\''")) + "'";
     }
 
     private String tail(String s, int max) {
@@ -1023,61 +1110,96 @@ public class AdminUserController {
         return s.replace("\\", "/");
     }
 
-    private String buildStartScript(String prefix, String area) {
-        // 使用 start.sh(BH02_45_15_15_0) 的有效默认参数集
+    private String buildStartScript(String prefix, String area, String jobDirLinux, String jobId) {
+        String suffix = jobId.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
+        String elevRaster = "beta_elev_" + suffix;
+        String debrisRaster = "beta_debris_" + suffix;
+        String impactRaster = "beta_impact_" + suffix;
+
         StringBuilder sb = new StringBuilder();
         sb.append("# r.avaflow beta script (auto-generated)\n");
-        sb.append("r.in.gdal -o --overwrite input=DATA1/elev.tif output=bh_elev\n");
-        sb.append("r.in.gdal -o --overwrite input=DATA1/debris.tif output=bh_debrisflow\n");
-        sb.append("r.in.gdal -o --overwrite input=DATA1/impact_area.tif output=bh_impactarea\n");
-        sb.append("g.region -s rast=bh_elev\n");
+        sb.append("r.in.gdal -o --overwrite input=")
+                .append(shellQuote(jobDirLinux + "/inputs/elev.tif"))
+                .append(" output=").append(elevRaster).append("\n");
+        sb.append("r.in.gdal -o --overwrite input=")
+                .append(shellQuote(jobDirLinux + "/inputs/debris.tif"))
+                .append(" output=").append(debrisRaster).append("\n");
+        sb.append("r.in.gdal -o --overwrite input=")
+                .append(shellQuote(jobDirLinux + "/inputs/impact_area.tif"))
+                .append(" output=").append(impactRaster).append("\n");
+        sb.append("g.region -s rast=").append(elevRaster).append("\n");
+
         String areaKey = (area == null || area.isEmpty()) ? "default" : area;
         String profile = env.getProperty("app.avaflow.profile." + areaKey,
                 env.getProperty("app.avaflow.profile", avaflowProfileDefault));
         String friction = env.getProperty("app.avaflow.friction", avaflowFriction);
         String time = env.getProperty("app.avaflow.time", avaflowTime);
         String phases = env.getProperty("app.avaflow.phases", avaflowPhases);
-        sb.append("r.avaflow.40G prefix=" + prefix
-                + " phases=" + phases + " elevation=bh_elev hrelease=bh_debrisflow rhrelease1=0.8"
-                + " friction=" + friction + " time=" + time + " impactarea=bh_impactarea"
-                + " profile=" + profile
-                + " visualization=0,1.0,5.0,5.0,1,200,5,0,3000,50,0.30,0.30,0.60,0.2,1.0,None,None,None\n");
+        sb.append("r.avaflow.40G prefix=").append(prefix)
+                .append(" phases=").append(phases)
+                .append(" elevation=").append(elevRaster)
+                .append(" hrelease=").append(debrisRaster)
+                .append(" rhrelease1=0.8")
+                .append(" friction=").append(friction)
+                .append(" time=").append(time)
+                .append(" impactarea=").append(impactRaster)
+                .append(" profile=").append(profile)
+                .append(" visualization=0,1.0,5.0,5.0,1,200,5,0,3000,50,0.30,0.30,0.60,0.2,1.0,None,None,None\n");
         sb.append("g.region -d\n");
         return sb.toString();
     }
 
-
-    private Map<String, Object> convertAvaflowFrames(String asciiDir, String prefix, String staticDir) {
+    private Map<String, Object> convertAvaflowFrames(
+            String asciiDir,
+            String prefix,
+            String staticDir,
+            String jobId,
+            String sourceCrs) {
         Map<String, Object> out = new HashMap<>();
         File dir = new File(asciiDir);
         File[] files = dir.listFiles((d, name) -> name.matches(prefix + "_hflow\\d{4}\\.asc"));
         int count = 0;
-        String outputBase = avaflowStaticDir + "/avaflow_beta";
+        double[] bbox = null;
+        File outDir = new File(new File(staticDir, "avaflow_beta"), jobId);
+        if (!outDir.exists() && !outDir.mkdirs()) {
+            out.put("frameCount", 0);
+            out.put("outputBase", "/ng/avaflow_beta/" + jobId);
+            out.put("bbox", null);
+            return out;
+        }
+
         if (files != null && files.length > 0) {
             java.util.Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
-            File outDir = new File(outputBase);
-            if (!outDir.exists()) outDir.mkdirs();
-            // 复用 AscToGeoJSONConverter 逐个转换
             for (File f : files) {
-                int idx = count + 1;
-                File geo = new File(outDir, "avaflow_output" + idx + ".geojson");
+                File geo = new File(outDir, "avaflow_output" + (count + 1) + ".geojson");
                 try {
-                    AscToGeoJSONConverter.convert(f, geo);
+                    double[] frameBbox = AscToGeoJSONConverter.convert(f, geo, sourceCrs);
+                    if (geo.isFile() && geo.length() > 0) {
+                        count++;
+                        if (frameBbox != null) {
+                            if (bbox == null) {
+                                bbox = frameBbox.clone();
+                            } else {
+                                bbox[0] = Math.min(bbox[0], frameBbox[0]);
+                                bbox[1] = Math.min(bbox[1], frameBbox[1]);
+                                bbox[2] = Math.max(bbox[2], frameBbox[2]);
+                                bbox[3] = Math.max(bbox[3], frameBbox[3]);
+                            }
+                        }
+                    }
                 } catch (Exception e) {
-                    System.err.println("转换失败: " + f.getName() + " -> " + e.getMessage());
+                    System.err.println("\u8f6c\u6362\u5931\u8d25: " + f.getName() + " -> " + e.getMessage());
                 }
-                count++;
             }
         }
         out.put("frameCount", count);
-        out.put("outputBase", "/ng/avaflow_beta");
+        out.put("outputBase", "/ng/avaflow_beta/" + jobId);
+        out.put("bbox", bbox == null
+                ? null
+                : Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
         return out;
     }
 
-    /**
-     * 解析 tif_to_json.py 的 RESULT_JSON：
-     * 兼容批量输出（JSON 数组）与旧版单帧输出（JSON 对象）。
-     */
     private List<Map<String, Object>> parseFrameList(String json) throws Exception {
         Object parsed = OBJECT_MAPPER.readValue(json, Object.class);
         List<Map<String, Object>> list = new ArrayList<>();
