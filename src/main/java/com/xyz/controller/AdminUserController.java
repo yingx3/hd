@@ -1013,12 +1013,12 @@ public class AdminUserController {
 
                 job.put("phase", "converting");
                 job.put("progress", 85);
-                job.put("message", "\u6a21\u578b\u8ba1\u7b97\u5b8c\u6210, \u6b63\u5728\u8f6c\u6362 GeoJSON...");
+                job.put("message", "\u6a21\u578b\u8ba1\u7b97\u5b8c\u6210, \u6b63\u5728\u51c6\u5907 ASC \u5e27...");
 
                 String asciiDir = new File(
                         new File(avaflowWslHome, prefix + "_results"),
                         prefix + "_ascii").getPath();
-                Map<String, Object> conv = convertAvaflowFrames(
+                Map<String, Object> conv = prepareAvaflowAscFrames(
                         asciiDir, prefix, avaflowStaticDir, jobId, avaflowSourceCrs);
                 int frameCount = ((Number) conv.get("frameCount")).intValue();
                 if (frameCount <= 0) {
@@ -1033,7 +1033,10 @@ public class AdminUserController {
                 job.put("progress", 100);
                 job.put("outputBase", conv.get("outputBase"));
                 job.put("frameCount", frameCount);
+                job.put("ascBase", conv.get("ascBase"));
+                job.put("frameFiles", conv.get("frameFiles"));
                 job.put("bbox", conv.get("bbox"));
+                job.put("meta", conv.get("meta"));
                 job.put("message", "\u5b8c\u6210, \u8f93\u51fa " + frameCount + " \u5e27");
             } catch (Exception e) {
                 job.put("status", "error");
@@ -1147,6 +1150,89 @@ public class AdminUserController {
                 .append(" visualization=0,1.0,5.0,5.0,1,200,5,0,3000,50,0.30,0.30,0.60,0.2,1.0,None,None,None\n");
         sb.append("g.region -d\n");
         return sb.toString();
+    }
+
+    /**
+     * Copies r.avaflow ASC frames into the nginx static directory and returns
+     * grid metadata for the front-end shader renderer.
+     */
+    private Map<String, Object> prepareAvaflowAscFrames(
+            String asciiDir,
+            String prefix,
+            String staticDir,
+            String jobId,
+            String sourceCrs) {
+        Map<String, Object> out = new HashMap<>();
+        File dir = new File(asciiDir);
+        File[] files = dir.listFiles((d, name) -> name.matches(prefix + "_hflow\\d{4}\\.asc"));
+        File outDir = new File(new File(staticDir, "avaflow_beta"), jobId);
+        File framesDir = new File(outDir, "frames");
+        if (!framesDir.exists() && !framesDir.mkdirs()) {
+            out.put("frameCount", 0);
+            out.put("outputBase", "/ng/avaflow_beta/" + jobId);
+            out.put("ascBase", "/ng/avaflow_beta/" + jobId + "/frames");
+            out.put("frameFiles", Collections.emptyList());
+            out.put("meta", Collections.emptyMap());
+            return out;
+        }
+
+        List<String> frameFiles = new ArrayList<>();
+        AscGridMetadataReader.GridInfo first = null;
+        double globalMin = Double.POSITIVE_INFINITY;
+        double globalMax = Double.NEGATIVE_INFINITY;
+        boolean hasValue = false;
+
+        if (files != null && files.length > 0) {
+            Arrays.sort(files, (a, b) -> a.getName().compareTo(b.getName()));
+            for (File file : files) {
+                try {
+                    AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(file);
+                    if (first == null) {
+                        first = info;
+                    }
+                    if (info.hasValue) {
+                        globalMin = Math.min(globalMin, info.minValue);
+                        globalMax = Math.max(globalMax, info.maxValue);
+                        hasValue = true;
+                    }
+                    File target = new File(framesDir, file.getName());
+                    Files.copy(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    frameFiles.add(file.getName());
+                } catch (Exception e) {
+                    System.err.println("ASC 帧准备失败: " + file.getName() + " -> " + e.getMessage());
+                }
+            }
+        }
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("sourceCrs", sourceCrs);
+        if (first != null) {
+            meta.put("ncols", first.ncols);
+            meta.put("nrows", first.nrows);
+            meta.put("cellsize", first.cellSize);
+            try {
+                double[] center = AscGridMetadataReader.transformCenter(first, sourceCrs);
+                double[] bbox = AscGridMetadataReader.transformBbox(first, sourceCrs);
+                meta.put("centerLon", center[0]);
+                meta.put("centerLat", center[1]);
+                meta.put("bbox", Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
+            } catch (Exception e) {
+                meta.put("centerLon", null);
+                meta.put("centerLat", null);
+                meta.put("bbox", null);
+                System.err.println("ASC 坐标转换失败: " + e.getMessage());
+            }
+        }
+        meta.put("globalMin", hasValue ? globalMin : 0.0);
+        meta.put("globalMax", hasValue ? globalMax : 0.0);
+
+        out.put("frameCount", frameFiles.size());
+        out.put("outputBase", "/ng/avaflow_beta/" + jobId);
+        out.put("ascBase", "/ng/avaflow_beta/" + jobId + "/frames");
+        out.put("frameFiles", frameFiles);
+        out.put("meta", meta);
+        out.put("bbox", meta.get("bbox"));
+        return out;
     }
 
     private Map<String, Object> convertAvaflowFrames(
