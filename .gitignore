@@ -50,3 +50,4 @@ suanfa/Pro/*.p
 suanfa/Pro/*.zip
 data/YiGong_params/
 .tmp_ui_patch.py
+data/wave/
