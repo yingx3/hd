@@ -35,3 +35,6 @@ __pycache__/
 *.log
 output_anti.txt
 output_wedge.txt
+
+# --- Pro(山洪泥石流) 运行任务与结果 ---
+suanfa/Pro/jobs/

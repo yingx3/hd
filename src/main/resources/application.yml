@@ -41,3 +41,16 @@ app:
     profile: "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"
     # profile.巴宜区: "..."
     # profile.波密县: "..."
+
+  # 山洪泥石流启动动力学模型（Pro / suanfa/Pro/python_port 数值内核）
+  pro:
+    # 任务目录（输入栅格 / work / progress.json）；留空即 <project-root>/suanfa/Pro/jobs
+    jobs-root: ""
+    # 数值内核包装脚本；留空即 <project-root>/suanfa/Pro/run_pro.py
+    script: ""
+    # 结果帧在 static-dir 下的子目录（前端通过 /ng/<subdir>/<jobId>/frames 访问）
+    static-subdir: pro
+    # 单次计算超时（秒）
+    timeout: 3600
+    # 默认最大输出帧数（超过则自动抽帧，保证动画流畅与出图速度）
+    default-max-frames: 40

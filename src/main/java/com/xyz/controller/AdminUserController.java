@@ -119,6 +119,22 @@ public class AdminUserController {
     @Value("${app.process-timeout:600}")
     private long processTimeoutSeconds;
 
+    // ---- 山洪泥石流启动动力学模型（Pro / python_port 数值内核）----
+    @Value("${app.pro.jobs-root:}")
+    private String proJobsRoot;
+
+    @Value("${app.pro.script:}")
+    private String proScript;
+
+    @Value("${app.pro.static-subdir:pro}")
+    private String proStaticSubdir;
+
+    @Value("${app.pro.timeout:3600}")
+    private long proTimeoutSeconds;
+
+    @Value("${app.pro.default-max-frames:40}")
+    private int proDefaultMaxFrames;
+
     @PostMapping("/fx")
     public String fxmodelparam(@RequestBody FormData formData) throws  Exception {
         // 获取表单数据
@@ -138,7 +154,7 @@ public class AdminUserController {
         //批量执行多时间段（3、6、12、24h等）
         for(int i=0;i<time.size();i++){
             int nums=time.size();
-            String x = TRIGRS(time.get(i),rsl,depth,diffus,ksat,zmax,color,nums);
+            String x = TRIGRS(projectRoot, time.get(i),rsl,depth,diffus,ksat,zmax,color,nums);
             nums_n.add(x);
         }
         Set<String> processedPids = new HashSet<>();
@@ -152,7 +168,7 @@ public class AdminUserController {
                 // 检查是否有 PID 未在运行
                 allPidsFinished = true;
 
-            if (checkAndExecute(nums_n, color, time.get(i),processedPids,p_name)) {
+            if (checkAndExecute(projectRoot, nums_n, color, time.get(i),processedPids,p_name)) {
                 break;
             }
             // 检查是否还有 PID 在运行
@@ -212,13 +228,13 @@ public class AdminUserController {
     }
 
     // 检查 PID 并在少一个时执行代码
-    public static boolean checkAndExecute(List<String> pids, String color, String time, Set<String> processedPids,Set<String> p_name) throws Exception {
+    public static boolean checkAndExecute(String projectRoot, List<String> pids, String color, String time, Set<String> processedPids,Set<String> p_name) throws Exception {
         boolean anyPidStopped = false;
         for (String pid : pids) {
             if (!isPidRunning(pid)&& !processedPids.contains(pid)) {
                 // 如果有 PID 不在运行，则执行代码
                 processedPids.add(pid); // 标记该 PID 已处理
-                String z=GrayscaleImageGenerator(color, time);
+                String z=GrayscaleImageGenerator(projectRoot, color, time);
                 p_name.add(z);
 //                return true; // 执行过操作
 
@@ -256,20 +272,20 @@ public class AdminUserController {
     }
 
     //生成风险txt文件
-    public static String TRIGRS(String time,String rsl,String depth,String diffus,String ksat,String zmax,String color,int nums) throws IOException, InterruptedException {
+    public static String TRIGRS(String projectRoot,String time,String rsl,String depth,String diffus,String ksat,String zmax,String color,int nums) throws IOException, InterruptedException {
 
         final String[] result1 = new String[1];
 //        int[] pid = new int[nums];
         // 备份原始文件
-        backupFile(ORIG_FILE_PATH, BACKUP_FILE_PATH);
+        backupFile(new java.io.File(projectRoot, "tr_in.txt").getAbsolutePath(), new java.io.File(projectRoot, "tr_in_b.txt").getAbsolutePath());
 
         // 设置tr_in.txt 文件路径
 //        String filePath = "D:/code/c/demo1/tr_in.txt";
-        String filePath = "./tr_in.txt";
+        String filePath = new java.io.File(projectRoot, "tr_in.txt").getAbsolutePath();
 
 
         //读取栅格图的行列号
-        String filePath3 = "./data/tutorial/dem.asc";
+        String filePath3 = new java.io.File(projectRoot, "data/tutorial/dem.asc").getAbsolutePath();
         BufferedReader reader3 = new BufferedReader(new FileReader(filePath3));
         String line_1 = reader3.readLine(); // 读取第一行数据
         String line_2 = reader3.readLine(); // 读取第二行数据
@@ -283,7 +299,7 @@ public class AdminUserController {
         System.out.println("第二行数据中的数字部分: " + nrows);*/
 
         //读取像元个数
-        String filePath4 = "./data/tutorial/TIcelindxList_tutorial.txt";
+        String filePath4 = new java.io.File(projectRoot, "data/tutorial/TIcelindxList_tutorial.txt").getAbsolutePath();
         BufferedReader reader4 = new BufferedReader(new FileReader(filePath4));
         int lineCount = 0;
         while (reader4.readLine() != null) {
@@ -294,7 +310,7 @@ public class AdminUserController {
         //System.out.println("像元个数: " + lineCountStr);
 
         //读取nwf（影响像元个数）
-        String filePath5 = "./data/tutorial/TIwfactorList_tutorial.txt";
+        String filePath5 = new java.io.File(projectRoot, "data/tutorial/TIwfactorList_tutorial.txt").getAbsolutePath();
         BufferedReader reader5 = new BufferedReader(new FileReader(filePath5));
         int lineCount1 = 0;
         while (reader5.readLine() != null) {
@@ -340,7 +356,7 @@ public class AdminUserController {
 //        ProcessBuilder builder = new ProcessBuilder("cmd", "/c", "start", "D:/code/c/demo1/TRIGRS.exe");
 //        Process process = builder.start();
 //        // 恢复原始文件
-//        restoreFile(ORIG_FILE_PATH, BACKUP_FILE_PATH);
+//        restoreFile(new java.io.File(projectRoot, "tr_in.txt").getAbsolutePath(), new java.io.File(projectRoot, "tr_in_b.txt").getAbsolutePath());
 
 //        new Thread(() -> {
 //            try {
@@ -353,11 +369,12 @@ public class AdminUserController {
 //        }).start();
 //
 //        // 恢复原始文件
-//        restoreFile(ORIG_FILE_PATH, BACKUP_FILE_PATH);
+//        restoreFile(new java.io.File(projectRoot, "tr_in.txt").getAbsolutePath(), new java.io.File(projectRoot, "tr_in_b.txt").getAbsolutePath());
 
         CompletableFuture<Void> processFuture = CompletableFuture.runAsync(() -> {
             try {
-                ProcessBuilder builder = new ProcessBuilder("cmd", "/c", "start", "./TRIGRS.exe");//cmd启动新线程执行TRIGRS
+                ProcessBuilder builder = new ProcessBuilder("cmd", "/c", "start", "", "/D", new java.io.File(projectRoot).getAbsolutePath(), new java.io.File(projectRoot, "TRIGRS.exe").getAbsolutePath());//cmd启动新线程执行TRIGRS
+                builder.directory(new java.io.File(projectRoot));
                  builder.start();//启动cmd，进而启动TRIGRS.exe
                 ProcessBuilder builder1 = new ProcessBuilder("cmd", "/c","tasklist", "/FI", "IMAGENAME eq TRIGRS.exe");
 //                ProcessBuilder builder1 = new ProcessBuilder("cmd", "/c","tasklist");
@@ -443,7 +460,7 @@ public class AdminUserController {
             e.printStackTrace();
         }
         // 同时执行恢复文件的操作
-        restoreFile(ORIG_FILE_PATH, BACKUP_FILE_PATH);
+        restoreFile(new java.io.File(projectRoot, "tr_in.txt").getAbsolutePath(), new java.io.File(projectRoot, "tr_in_b.txt").getAbsolutePath());
 
        return result1[0];
 
@@ -469,8 +486,6 @@ public class AdminUserController {
             e.printStackTrace();
         }
     }
-    private static final String ORIG_FILE_PATH = "./tr_in.txt";
-    private static final String BACKUP_FILE_PATH = "./tr_in_b.txt";
     //备份文件
     public static void backupFile(String origFilePath, String backupFilePath) throws IOException {
         Path origPath = Paths.get(origFilePath);
@@ -504,9 +519,9 @@ public class AdminUserController {
     }
 
     //风险txt文件转为png
-    public static String GrayscaleImageGenerator(String color,String time) throws Exception {
+    public static String GrayscaleImageGenerator(String projectRoot,String color,String time) throws Exception {
         System.out.println("开始生成图-----");
-        String File = "./data/result/TRfs_min_tutorial_1.txt"; // 输入文件路径
+        String File = new java.io.File(projectRoot, "data/result/TRfs_min_tutorial_1.txt").getAbsolutePath(); // 输入文件路径
         // 自动创建唯一的临时文件，前缀为 "temp_"，后缀为 ".txt"
         Path inputFile = Files.createTempFile("temp_", ".txt");
         // 拷贝原文件到临时文件
@@ -1032,9 +1047,9 @@ public class AdminUserController {
                 job.put("phase", "done");
                 job.put("progress", 100);
                 job.put("outputBase", conv.get("outputBase"));
-                job.put("frameCount", frameCount);
                 job.put("ascBase", conv.get("ascBase"));
                 job.put("frameFiles", conv.get("frameFiles"));
+                job.put("frameCount", frameCount);
                 job.put("bbox", conv.get("bbox"));
                 job.put("meta", conv.get("meta"));
                 job.put("message", "\u5b8c\u6210, \u8f93\u51fa " + frameCount + " \u5e27");
@@ -1079,6 +1094,415 @@ public class AdminUserController {
         }
         return ResponseEntity.ok(job);
     }
+    // ===================================================================== //
+    // 山洪泥石流启动动力学模型（Pro）：调用 suanfa/Pro/python_port 数值内核
+    // ===================================================================== //
+
+    /** jobId -> 任务状态，供 /pro_start_status 轮询 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Map<String, Object>> proJobs =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Pro 任务根目录（默认 <projectRoot>/suanfa/Pro/jobs）。 */
+    private File proJobsRootDir() {
+        String root = (proJobsRoot == null || proJobsRoot.trim().isEmpty())
+                ? projectRoot + "/suanfa/Pro/jobs"
+                : proJobsRoot.trim();
+        return new File(root);
+    }
+
+    /** Pro 数值内核包装脚本路径（默认 <projectRoot>/suanfa/Pro/run_pro.py）。 */
+    private String proScriptPath() {
+        return (proScript == null || proScript.trim().isEmpty())
+                ? projectRoot + "/suanfa/Pro/run_pro.py"
+                : proScript.trim();
+    }
+
+    private static String proFrameName(String prefix, int index) {
+        return String.format(Locale.ROOT, "%s_hflow%04d.asc", prefix, index);
+    }
+
+    private static double numOf(Map<String, Object> map, String key, double fallback) {
+        Object v = map == null ? null : map.get(key);
+        if (v == null) {
+            return fallback;
+        }
+        try {
+            return Double.parseDouble(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /** 依据文件名猜测输入栅格类型：zb(灾前地形) / zl(灾后地形) / hw(初始水深)。 */
+    private static String classifyProInput(String name) {
+        if (name == null) {
+            return null;
+        }
+        String n = name.toLowerCase(Locale.ROOT);
+        if (n.contains("zl") || n.contains("post") || n.contains("\u540e")) {
+            return "zl";
+        }
+        if (n.contains("hw") || n.contains("water") || n.contains("\u6c34\u6df1")) {
+            return "hw";
+        }
+        if (n.contains("zb") || n.contains("elev") || n.contains("dem")) {
+            return "zb";
+        }
+        return null;
+    }
+
+    /**
+     * 上传 Pro 模型的三幅输入栅格（灾前地形 / 灾后地形 / 初始水深），并立即探测网格信息。
+     * 支持命名部件 zb/zl/hw，也支持 files[] 按文件名自动识别。
+     */
+    @PostMapping("/pro_upload")
+    public ResponseEntity<?> uploadProInputs(
+            @RequestParam(value = "zb", required = false) MultipartFile zb,
+            @RequestParam(value = "zl", required = false) MultipartFile zl,
+            @RequestParam(value = "hw", required = false) MultipartFile hw,
+            @RequestParam(value = "files", required = false) MultipartFile[] files,
+            @RequestParam(value = "jobId", required = false) String requestedJobId) {
+        try {
+            String jobId = (requestedJobId == null || requestedJobId.trim().isEmpty())
+                    ? "pro_" + System.currentTimeMillis() + "_"
+                        + UUID.randomUUID().toString().replace("-", "").substring(0, 8)
+                    : requireAvaflowJobId(requestedJobId);
+            File jobDir = new File(proJobsRootDir(), jobId);
+            File inputDir = new File(jobDir, "inputs");
+            Files.createDirectories(inputDir.toPath());
+
+            Map<String, MultipartFile> picked = new LinkedHashMap<>();
+            if (zb != null && !zb.isEmpty()) {
+                picked.put("zb", zb);
+            }
+            if (zl != null && !zl.isEmpty()) {
+                picked.put("zl", zl);
+            }
+            if (hw != null && !hw.isEmpty()) {
+                picked.put("hw", hw);
+            }
+            if (files != null) {
+                for (MultipartFile f : files) {
+                    if (f == null || f.isEmpty()) {
+                        continue;
+                    }
+                    String key = classifyProInput(f.getOriginalFilename());
+                    if (key != null) {
+                        picked.putIfAbsent(key, f);
+                    }
+                }
+                // 文件名无法识别时按 zb / zl / hw 顺序补齐空位
+                for (MultipartFile f : files) {
+                    if (f == null || f.isEmpty()) {
+                        continue;
+                    }
+                    for (String key : Arrays.asList("zb", "zl", "hw")) {
+                        if (!picked.containsKey(key)) {
+                            picked.put(key, f);
+                            break;
+                        }
+                    }
+                }
+            }
+            for (String key : Arrays.asList("zb", "zl", "hw")) {
+                if (!picked.containsKey(key)) {
+                    return ResponseEntity.badRequest().body("\u7f3a\u5c11\u8f93\u5165\u6587\u4ef6: " + key);
+                }
+            }
+
+            for (Map.Entry<String, MultipartFile> e : picked.entrySet()) {
+                File target = new File(inputDir, e.getKey() + ".tif");
+                e.getValue().transferTo(target);
+            }
+
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("status", "ok");
+            resp.put("jobId", jobId);
+
+            ProcessResult pr = runProcess(
+                    Arrays.asList(pythonExe, proScriptPath(), "--probe", "--job-dir", jobDir.getAbsolutePath()),
+                    new File(projectRoot), 300, "[pro_probe] ", StandardCharsets.UTF_8);
+            String probeJson = extractSentinel(pr.output, "PROBE_JSON=");
+            if (probeJson.isEmpty()) {
+                resp.put("status", "error");
+                resp.put("message", "\u8f93\u5165\u6805\u683c\u63a2\u6d4b\u5931\u8d25: " + tail(pr.output, 500));
+                return ResponseEntity.badRequest().body(resp);
+            }
+            Map<String, Object> probe = OBJECT_MAPPER.readValue(probeJson, new TypeReference<Map<String, Object>>() {
+            });
+            resp.put("probe", probe);
+            if (!"ok".equals(String.valueOf(probe.get("status")))) {
+                resp.put("status", "error");
+                resp.put("message", String.valueOf(probe.get("message")));
+                return ResponseEntity.badRequest().body(resp);
+            }
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("\u4e0a\u4f20\u5931\u8d25: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 启动 Pro 模型：后端调用 suanfa/Pro/run_pro.py（python_port 数值内核），
+     * 结果直接写成 ASC 帧，前端复用 DebrisFlow 渲染 + 时间轴。
+     */
+    @PostMapping("/pro_start")
+    public ResponseEntity<?> startProModel(@RequestBody Map<String, Object> body) {
+        final String jobId;
+        try {
+            jobId = requireAvaflowJobId(str(body, "jobId"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+
+        File jobDir = new File(proJobsRootDir(), jobId);
+        File inputDir = new File(jobDir, "inputs");
+        for (String name : Arrays.asList("zb.tif", "zl.tif", "hw.tif")) {
+            File required = new File(inputDir, name);
+            if (!required.isFile() || required.length() == 0) {
+                return ResponseEntity.badRequest().body("\u4efb\u52a1\u8f93\u5165\u4e0d\u5b8c\u6574: " + name);
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> params = (body.get("params") instanceof Map)
+                ? (Map<String, Object>) body.get("params")
+                : Collections.<String, Object>emptyMap();
+
+        final double bed = numOf(params, "bed", 0.2);
+        final double nn = numOf(params, "nn", 0.0125);
+        final double dx = Math.max(0.0, numOf(params, "dx", 0.0));
+        final double dy = Math.max(0.0, numOf(params, "dy", 0.0));
+        final double rous = numOf(params, "rous", 2700.0);
+        final double rouf = numOf(params, "rouf", 1000.0);
+        final double interval = Math.max(1e-6, numOf(params, "interval", 10.0));
+        final double tmax = Math.max(1e-6, numOf(params, "tmax", 100.0));
+        final int maxFrames = (int) Math.max(1, Math.min(300, numOf(params, "maxFrames", proDefaultMaxFrames)));
+        String field = str(params, "field");
+        if (!Arrays.asList("total", "water", "solid", "speed").contains(field)) {
+            field = "total";
+        }
+        final String fieldArg = field;
+        final String targetCrs = str(params, "targetCrs");
+
+        File outDir = new File(new File(avaflowStaticDir, proStaticSubdir), jobId);
+        final File framesDir = new File(outDir, "frames");
+        if (!framesDir.isDirectory() && !framesDir.mkdirs()) {
+            return ResponseEntity.internalServerError().body("\u65e0\u6cd5\u521b\u5efa\u8f93\u51fa\u76ee\u5f55");
+        }
+        final String prefix = jobId.startsWith("pro_") ? jobId : "pro_" + jobId;
+        final String outBase = "/ng/" + proStaticSubdir + "/" + jobId;
+
+        Map<String, Object> job = new java.util.concurrent.ConcurrentHashMap<>();
+        job.put("jobId", jobId);
+        job.put("prefix", prefix);
+        job.put("status", "running");
+        job.put("phase", "simulation");
+        job.put("progress", 0);
+        job.put("frames", 0);
+        job.put("maxFrames", maxFrames);
+        job.put("field", fieldArg);
+        job.put("tmax", tmax);
+        job.put("interval", interval);
+        job.put("message", "\u6570\u503c\u8ba1\u7b97\u4e2d...");
+        job.put("startedAt", System.currentTimeMillis());
+        proJobs.put(jobId, job);
+
+        new Thread(() -> {
+            try {
+                List<String> cmd = new ArrayList<>(Arrays.asList(
+                        pythonExe, proScriptPath(),
+                        "--job-dir", jobDir.getAbsolutePath(),
+                        "--static-dir", avaflowStaticDir,
+                        "--out-subdir", proStaticSubdir,
+                        "--frames-dir", framesDir.getAbsolutePath(),
+                        "--out-base", outBase,
+                        "--prefix", prefix,
+                        "--bed", String.valueOf(bed),
+                        "--nn", String.valueOf(nn),
+                        "--dx", String.valueOf(dx),
+                        "--dy", String.valueOf(dy),
+                        "--rous", String.valueOf(rous),
+                        "--rouf", String.valueOf(rouf),
+                        "--interval", String.valueOf(interval),
+                        "--tmax", String.valueOf(tmax),
+                        "--max-frames", String.valueOf(maxFrames),
+                        "--field", fieldArg));
+                if (!targetCrs.isEmpty()) {
+                    cmd.add("--target-crs");
+                    cmd.add(targetCrs);
+                }
+
+                ProcessResult pr = runProcess(cmd, new File(projectRoot), proTimeoutSeconds, "[pro] ", StandardCharsets.UTF_8);
+                String resultJson = extractSentinel(pr.output, "PRO_RESULT_JSON=");
+                Map<String, Object> result = resultJson.isEmpty() ? null
+                        : OBJECT_MAPPER.readValue(resultJson, new TypeReference<Map<String, Object>>() {
+                        });
+                if (pr.exitCode != 0 || result == null || !"ok".equals(String.valueOf(result.get("status")))) {
+                    job.put("status", "error");
+                    job.put("phase", "error");
+                    String msg = (result != null && result.get("message") != null)
+                            ? String.valueOf(result.get("message"))
+                            : ("pro \u6a21\u578b\u6267\u884c\u5931\u8d25, \u9000\u51fa\u7801: " + pr.exitCode);
+                    job.put("message", msg);
+                    job.put("log", tail(pr.output, 2000));
+                    return;
+                }
+
+                job.put("phase", "converting");
+                job.put("progress", 97);
+                job.put("message", "\u7ed3\u679c\u6574\u7406\u4e2d...");
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> meta = (result.get("meta") instanceof Map)
+                        ? (Map<String, Object>) result.get("meta")
+                        : Collections.<String, Object>emptyMap();
+                String sourceCrs = (meta.get("sourceCrs") == null || String.valueOf(meta.get("sourceCrs")).isEmpty())
+                        ? avaflowSourceCrs
+                        : String.valueOf(meta.get("sourceCrs"));
+
+                Map<String, Object> conv = prepareProFrames(framesDir, prefix, jobId, sourceCrs);
+                int frameCount = ((Number) conv.get("frameCount")).intValue();
+                if (frameCount <= 0) {
+                    job.put("status", "error");
+                    job.put("phase", "error");
+                    job.put("message", "\u672a\u627e\u5230\u8f93\u51fa\u5e27(" + prefix + "_hflowNNNN.asc)");
+                    return;
+                }
+                job.put("status", "done");
+                job.put("phase", "done");
+                job.put("progress", 100);
+                job.put("outputBase", conv.get("outputBase"));
+                job.put("ascBase", conv.get("ascBase"));
+                job.put("frameFiles", conv.get("frameFiles"));
+                job.put("frameCount", frameCount);
+                job.put("bbox", conv.get("bbox"));
+                job.put("meta", conv.get("meta"));
+                job.put("message", "\u5b8c\u6210, \u8f93\u51fa " + frameCount + " \u5e27");
+            } catch (Exception e) {
+                job.put("status", "error");
+                job.put("phase", "error");
+                job.put("message", "Error: " + e.getMessage());
+            }
+        }, "pro-" + jobId).start();
+
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("status", "accepted");
+        resp.put("jobId", jobId);
+        resp.put("message", "\u5df2\u542f\u52a8, \u8bf7\u8f6e\u8be2\u72b6\u6001\u83b7\u53d6\u7ed3\u679c");
+        return ResponseEntity.ok(resp);
+    }
+
+    /** Pro 模型运行状态（含 python 侧 progress.json 中的实时进度）。 */
+    @GetMapping("/pro_start_status")
+    public ResponseEntity<?> proStartStatus(@RequestParam("jobId") String jobId) {
+        Map<String, Object> job = proJobs.get(jobId);
+        if (job == null) {
+            return ResponseEntity.status(404).body("\u672a\u77e5\u4efb\u52a1: " + jobId);
+        }
+        Object startedAt = job.get("startedAt");
+        if (startedAt instanceof Number) {
+            job.put("elapsedSeconds", (System.currentTimeMillis() - ((Number) startedAt).longValue()) / 1000);
+        }
+        if ("running".equals(job.get("status"))) {
+            File progressFile = new File(new File(proJobsRootDir(), jobId), "progress.json");
+            if (progressFile.isFile()) {
+                try {
+                    Map<String, Object> progress = OBJECT_MAPPER.readValue(progressFile,
+                            new TypeReference<Map<String, Object>>() {
+                            });
+                    if (progress.get("percent") != null) {
+                        job.put("progress", progress.get("percent"));
+                    }
+                    if (progress.get("frame") != null) {
+                        job.put("frames", progress.get("frame"));
+                    }
+                    String stage = progress.get("stage") == null ? "" : String.valueOf(progress.get("stage"));
+                    if (!stage.isEmpty() && !"done".equals(stage) && !"error".equals(stage)) {
+                        job.put("phase", stage);
+                    }
+                    if (progress.get("message") != null) {
+                        job.put("progressMessage", progress.get("message"));
+                    }
+                } catch (Exception ignored) {
+                    // progress.json 可能正在写入，忽略本次读取
+                }
+            }
+        }
+        return ResponseEntity.ok(job);
+    }
+
+    /** 汇总 Pro 输出帧的网格元数据（供前端 DebrisFlow 渲染与相机定位）。 */
+    private Map<String, Object> prepareProFrames(File framesDir, String prefix, String jobId, String sourceCrs)
+            throws Exception {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("outputBase", "/ng/" + proStaticSubdir + "/" + jobId);
+        out.put("ascBase", "/ng/" + proStaticSubdir + "/" + jobId + "/frames");
+
+        File[] files = framesDir.listFiles((d, name) ->
+                name.matches(Pattern.quote(prefix) + "_hflow\\d{4}\\.asc"));
+        List<String> frameFiles = new ArrayList<>();
+        if (files != null) {
+            Arrays.sort(files, Comparator.comparing(File::getName));
+            for (File f : files) {
+                frameFiles.add(f.getName());
+            }
+        }
+        out.put("frameFiles", frameFiles);
+        out.put("frameCount", frameFiles.size());
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("sourceCrs", sourceCrs);
+        meta.put("frameCount", frameFiles.size());
+        meta.put("prefix", prefix);
+
+        File metaFile = new File(framesDir, "frames_meta.json");
+        if (metaFile.isFile()) {
+            try {
+                Map<String, Object> pythonMeta = OBJECT_MAPPER.readValue(metaFile,
+                        new TypeReference<Map<String, Object>>() {
+                        });
+                for (String key : Arrays.asList("field", "globalMax", "globalMin", "dx", "dy",
+                        "interval", "tmax", "ncols", "nrows", "cellsize")) {
+                    if (pythonMeta.get(key) != null) {
+                        meta.put(key, pythonMeta.get(key));
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("frames_meta.json \u89e3\u6790\u5931\u8d25: " + e.getMessage());
+            }
+        }
+
+        if (!frameFiles.isEmpty()) {
+            File first = new File(framesDir, frameFiles.get(0));
+            AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(first);
+            meta.putIfAbsent("ncols", info.ncols);
+            meta.putIfAbsent("nrows", info.nrows);
+            meta.putIfAbsent("cellsize", info.cellSize);
+            if (info.hasValue) {
+                meta.putIfAbsent("globalMax", info.maxValue);
+                meta.putIfAbsent("globalMin", info.minValue);
+            }
+            try {
+                double[] center = AscGridMetadataReader.transformCenter(info, sourceCrs);
+                double[] bbox = AscGridMetadataReader.transformBbox(info, sourceCrs);
+                meta.put("centerLon", center[0]);
+                meta.put("centerLat", center[1]);
+                meta.put("bbox", Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
+            } catch (Exception e) {
+                meta.put("centerLon", null);
+                meta.put("centerLat", null);
+                meta.put("bbox", null);
+                System.err.println("Pro \u5750\u6807\u8f6c\u6362\u5931\u8d25: " + e.getMessage());
+            }
+        }
+
+        out.put("meta", meta);
+        out.put("bbox", meta.get("bbox"));
+        return out;
+    }
+
 
     private String newAvaflowJobId() {
         return "avaflow_" + System.currentTimeMillis() + "_"
@@ -1234,7 +1658,6 @@ public class AdminUserController {
         out.put("bbox", meta.get("bbox"));
         return out;
     }
-
     private Map<String, Object> convertAvaflowFrames(
             String asciiDir,
             String prefix,
