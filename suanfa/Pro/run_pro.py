@@ -330,6 +330,45 @@ def read_raster(path, default_crs=None):
     return arr, profile
 
 
+def _positive_centroid(matrix):
+    """Return the weighted (col, row) centroid of the positive part of a grid."""
+    arr = np.asarray(matrix, dtype=np.float64)
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    arr = np.maximum(arr, 0.0)
+    peak = float(arr.max()) if arr.size else 0.0
+    if peak <= 1e-9:
+        return None
+    mask = arr >= max(1e-6, peak * 0.05)
+    weights = arr[mask]
+    if weights.size == 0 or float(weights.sum()) <= 1e-12:
+        return None
+    rows, cols = np.nonzero(mask)
+    return (
+        float((cols * weights).sum() / weights.sum()),
+        float((rows * weights).sum() / weights.sum()),
+    )
+
+
+def resolve_source_centroid(zb, zl, hw):
+    """Locate the initial source centre for headerless input grids.
+
+    The anchor entered in the UI is a source-area coordinate, not the centre of
+    the whole rectangular calculation grid.  Prefer zB-zL (solid source), then
+    fall back to the initial water layer, and finally to the grid centre.
+    """
+    solid = np.maximum(
+        np.asarray(zb, dtype=np.float64) - np.asarray(zl, dtype=np.float64), 0.0
+    )
+    point = _positive_centroid(solid)
+    if point is not None:
+        return point[0], point[1], "solid"
+    point = _positive_centroid(hw)
+    if point is not None:
+        return point[0], point[1], "water"
+    nrows, ncols = solid.shape
+    return (ncols - 1) / 2.0, (nrows - 1) / 2.0, "grid-center"
+
+
 def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
                       resample_method="bilinear", default_crs=None,
                       anchor_lon=None, anchor_lat=None, dx_hint=None, dy_hint=None):
@@ -388,8 +427,11 @@ def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
         dx = float(dx_hint) if dx_hint and float(dx_hint) > 0 else 20.0
         dy = float(dy_hint) if dy_hint and float(dy_hint) > 0 else 20.0
         ncols, nrows = arr_b.shape[1], arr_b.shape[0]
-        xll = float(anchor_x[0]) - ncols * dx / 2.0
-        yll = float(anchor_y[0]) - nrows * dy / 2.0
+        source_col, source_row, source_kind = resolve_source_centroid(arr_b, arr_l, arr_w)
+        # The UI anchor is the initial source centre.  Place that centroid at
+        # the anchor instead of putting the geometric grid centre there.
+        xll = float(anchor_x[0]) - (source_col + 0.5) * dx
+        yll = float(anchor_y[0]) - (nrows - source_row - 0.5) * dy
         transform = (dx, 0.0, xll, 0.0, -dy, yll + dy * nrows)
         crs_name, crs_wkt = epsg_name(anchor_crs)
         grid = {
@@ -398,9 +440,16 @@ def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
             "crsName": crs_name or str(default_crs), "crsWkt": crs_wkt,
             "dx": dx, "dy": dy, "xll": xll, "yll": yll,
             "resampled": False, "anchored": True,
+            "anchorMode": "source-centroid",
+            "anchorSource": source_kind,
+            "anchorCol": round(float(source_col), 6),
+            "anchorRow": round(float(source_row), 6),
+            "anchorLon": float(anchor_lon),
+            "anchorLat": float(anchor_lat),
         }
-        log("无地理头部输入：按中心经纬度锚点 (%.7f, %.7f) 生成 %s 网格，xll=%.3f yll=%.3f"
-            % (float(anchor_lon), float(anchor_lat), grid["crsName"], xll, yll))
+        log("无地理头部输入：按源区中心锚点 (%.7f, %.7f) 生成 %s 网格，source=%s col=%.3f row=%.3f，xll=%.3f yll=%.3f"
+            % (float(anchor_lon), float(anchor_lat), grid["crsName"], source_kind,
+               source_col, source_row, xll, yll))
         return {"zb": arr_b, "zl": arr_l, "hw": arr_w}, grid
 
     if reproject_needed:
@@ -719,9 +768,9 @@ def parse_args(argv):
     parser.add_argument("--input-dir", default="", help="输入数据目录（默认 <job-dir>/inputs）")
     parser.add_argument("--source-crs", default="", help="asc/txt 输入的坐标系，如 EPSG:32647")
     parser.add_argument("--anchor-lon", type=float, default=None,
-                        help="无地理头部 txt/asc 的网格中心经度（WGS84，如易贡 94.9629943）")
+                        help="无地理头部 txt/asc 的源区中心经度（WGS84，如易贡 94.9629943）")
     parser.add_argument("--anchor-lat", type=float, default=None,
-                        help="无地理头部 txt/asc 的网格中心纬度（WGS84，如易贡 30.1975837）")
+                        help="无地理头部 txt/asc 的源区中心纬度（WGS84，如易贡 30.1975837）")
     parser.add_argument("--static-dir", default="")
     parser.add_argument("--out-subdir", default="pro")
     parser.add_argument("--out-base", default="")
