@@ -3,6 +3,10 @@ package com.tcp.client;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -10,12 +14,17 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TCPClientTest {
@@ -141,6 +150,63 @@ class TCPClientTest {
     }
 
     @Test
+    void clientReceivesFramesFromSocketAndWritesCsv(@TempDir Path tempDir) throws Exception {
+        byte[] response204 = frame(204, 32, 0);
+        byte[] response280 = frame(280, 32, 3);
+        putIntLE(response280, 4, 5200369);
+        putIntLE(response280, 8, 1);
+        putIntLE(response280, 24, 2000);
+        putIntLE(response280, 28, 1000);
+        putInt24BE(response280, 32, 1000);
+
+        ExecutorService serverExecutor = Executors.newSingleThreadExecutor();
+        TCPClient client = null;
+        try (ServerSocket server = new ServerSocket(0)) {
+            Future<?> serverFuture = serverExecutor.submit(() -> {
+                try (Socket socket = server.accept()) {
+                    readFully(socket.getInputStream(), new byte[324]);
+                    readFully(socket.getInputStream(), new byte[180]);
+                    byte[] response = concat(response204, response280);
+                    OutputStream output = socket.getOutputStream();
+                    output.write(response, 0, 7);
+                    output.flush();
+                    Thread.sleep(10L);
+                    output.write(response, 7, response.length - 7);
+                    output.flush();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            client = new TCPClient("127.0.0.1", server.getLocalPort(), tempDir.toFile(), 5, false);
+            Thread clientThread = new Thread(client, "tcp-client-test");
+            clientThread.start();
+            clientThread.join(5000);
+            serverFuture.get(5, TimeUnit.SECONDS);
+            assertFalse(clientThread.isAlive(), "client should stop after server closes the connection");
+        } finally {
+            if (client != null) {
+                client.closeConnection();
+            }
+            serverExecutor.shutdownNow();
+        }
+
+        List<Path> files;
+        try (Stream<Path> stream = Files.list(tempDir)) {
+            files = stream
+                    .filter(path -> path.getFileName().toString().endsWith(".csv"))
+                    .collect(Collectors.toList());
+        }
+
+        assertEquals(1, files.size());
+        List<String> lines = Files.readAllLines(files.get(0));
+        assertEquals("Timestamp,Direction,Voltage_mV", lines.get(0));
+        String[] columns = lines.get(1).split(",");
+        assertEquals("X", columns[1]);
+        assertEquals(1000f * (5000f / 0xFFFFFF), Float.parseFloat(columns[2]), 0.0001f);
+    }
+
+    @Test
     void requestPacketsKeepOriginalProtocolLayout() {
         byte[] request201 = TCPClient.buildRequest201(
                 "shanxishifan", "shanxishifan:shanxishifan", 955555);
@@ -176,6 +242,17 @@ class TCPClientTest {
         byte[] result = Arrays.copyOf(first, first.length + second.length);
         System.arraycopy(second, 0, result, first.length, second.length);
         return result;
+    }
+
+    private static void readFully(InputStream input, byte[] target) throws Exception {
+        int offset = 0;
+        while (offset < target.length) {
+            int count = input.read(target, offset, target.length - offset);
+            if (count < 0) {
+                throw new java.io.EOFException("Unexpected end of stream");
+            }
+            offset += count;
+        }
     }
 
     private static int readIntLE(byte[] data, int offset) {
