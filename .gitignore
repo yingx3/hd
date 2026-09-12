@@ -38,3 +38,15 @@ output_wedge.txt
 
 # --- Pro(山洪泥石流) 运行任务与结果 ---
 suanfa/Pro/jobs/
+
+
+# --- Pro 运行时任务、测试数据与生成文件 ---
+suanfa/Pro/user1/
+suanfa/Pro/flood/
+suanfa/Pro/task1/area_x/
+suanfa/Pro/**/for_testing/
+suanfa/Pro/**/*.log
+suanfa/Pro/*.p
+suanfa/Pro/*.zip
+data/YiGong_params/
+.tmp_ui_patch.py

@@ -6,6 +6,11 @@ spring:
     username: postgres
     password: 666888
     driver-class-name: org.postgresql.Driver
+  servlet:
+    multipart:
+      # Pro 模型（洪水泥石流启动）输入支持 txt/asc（ESRI ASCII 未压缩，单文件可达数十 MB）
+      max-file-size: 500MB
+      max-request-size: 1GB
   mvc:
     pathmatch:
       matching-strategy: ant_path_matcher

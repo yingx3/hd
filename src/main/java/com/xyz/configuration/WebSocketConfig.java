@@ -19,7 +19,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws") // WebSocket 连接端点
-                .setAllowedOrigins("http://localhost:5173") // 允许所有本地端口跨域
+                .setAllowedOriginPatterns("*") // 允许所有来源
                 .withSockJS(); // 必须启用 SockJS 支持
     }
 }

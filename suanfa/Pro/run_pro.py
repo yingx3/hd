@@ -331,7 +331,8 @@ def read_raster(path, default_crs=None):
 
 
 def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
-                      resample_method="bilinear", default_crs=None):
+                      resample_method="bilinear", default_crs=None,
+                      anchor_lon=None, anchor_lat=None, dx_hint=None, dy_hint=None):
     """把三幅输入栅格统一到同一个（米制）计算网格。
 
     返回 (arrays, grid)，grid 含 transform/ncols/nrows/crs/dx/dy。
@@ -366,15 +367,40 @@ def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
         target_crs = CRS.from_user_input(target_crs_override)
 
     if src_transform is None:
-        # 无地理参考：直接按矩阵下标计算，要求三幅栅格形状一致
+        # 无地理参考（txt/asc 没有 xllcorner/yllcorner 头部）：
+        # 必须由前端提供网格中心经纬度锚点，否则拒绝计算。
+        # 旧逻辑会静默按 (0,0) 处理，导致结果被渲染到 (0,0) 附近（印度洋）。
         if not (arr_b.shape == arr_l.shape == arr_w.shape):
-            raise ValueError("输入栅格缺少地理参考且尺寸不一致，无法对齐: %s" % (arr_b.shape,))
-        dx, dy = 20.0, 20.0
+            raise ValueError("输入栅格缺少地理参考且尺寸不一致，无法对齐: %s / %s / %s"
+                             % (arr_b.shape, arr_l.shape, arr_w.shape))
+        if anchor_lon is None or anchor_lat is None:
+            raise ValueError(
+                "输入 txt/asc 缺少 ESRI ASCII 地理头部（xllcorner/yllcorner），"
+                "且未提供网格中心经纬度锚点。请在界面填写「网格中心经度/纬度」，"
+                "或改用带地理头部的数据。")
+        if not default_crs or not str(default_crs).strip():
+            raise ValueError("无地理头部输入需要指定数据坐标系（--source-crs，例如 EPSG:32646）")
+        from rasterio.warp import transform as rio_transform_xy
+        from rasterio.crs import CRS
+        anchor_crs = CRS.from_user_input(str(default_crs))
+        anchor_x, anchor_y = rio_transform_xy(
+            "EPSG:4326", anchor_crs, [float(anchor_lon)], [float(anchor_lat)])
+        dx = float(dx_hint) if dx_hint and float(dx_hint) > 0 else 20.0
+        dy = float(dy_hint) if dy_hint and float(dy_hint) > 0 else 20.0
+        ncols, nrows = arr_b.shape[1], arr_b.shape[0]
+        xll = float(anchor_x[0]) - ncols * dx / 2.0
+        yll = float(anchor_y[0]) - nrows * dy / 2.0
+        transform = (dx, 0.0, xll, 0.0, -dy, yll + dy * nrows)
+        crs_name, crs_wkt = epsg_name(anchor_crs)
         grid = {
-            "ncols": arr_b.shape[1], "nrows": arr_b.shape[0],
-            "transform": None, "crs": None, "crsName": None, "crsWkt": None,
-            "dx": dx, "dy": dy, "xll": 0.0, "yll": 0.0, "resampled": False,
+            "ncols": ncols, "nrows": nrows,
+            "transform": transform, "crs": anchor_crs,
+            "crsName": crs_name or str(default_crs), "crsWkt": crs_wkt,
+            "dx": dx, "dy": dy, "xll": xll, "yll": yll,
+            "resampled": False, "anchored": True,
         }
+        log("无地理头部输入：按中心经纬度锚点 (%.7f, %.7f) 生成 %s 网格，xll=%.3f yll=%.3f"
+            % (float(anchor_lon), float(anchor_lat), grid["crsName"], xll, yll))
         return {"zb": arr_b, "zl": arr_l, "hw": arr_w}, grid
 
     if reproject_needed:
@@ -513,7 +539,9 @@ def run_simulation(job_dir, args):
     log("输入目录 %s -> %s"
         % (input_dir, ", ".join("%s=%s" % (k, os.path.basename(inputs[k])) for k in INPUT_KEYS)))
     arrays, grid = prepare_work_grid(
-        inputs, target_crs_override=args.target_crs, default_crs=args.source_crs)
+        inputs, target_crs_override=args.target_crs, default_crs=args.source_crs,
+        anchor_lon=args.anchor_lon, anchor_lat=args.anchor_lat,
+        dx_hint=args.dx, dy_hint=args.dy)
 
     # python_port 的 main() 从 basePath 下按 txt 读取输入
     work_dir = os.path.join(job_dir, "work")
@@ -632,10 +660,14 @@ def run_simulation(job_dir, args):
 # --------------------------------------------------------------------------- #
 # 输入探测（上传后立刻给出网格 / 坐标系摘要）
 # --------------------------------------------------------------------------- #
-def probe_inputs(job_dir, input_dir="", source_crs="", max_cells=1_000_000):
+def probe_inputs(job_dir, input_dir="", source_crs="", max_cells=1_000_000,
+                 anchor_lon=None, anchor_lat=None, dx_hint=None, dy_hint=None):
     target_dir = input_dir or os.path.join(job_dir, "inputs")
     inputs = resolve_inputs(target_dir)
-    arrays, grid = prepare_work_grid(inputs, max_cells=max_cells, default_crs=source_crs)
+    arrays, grid = prepare_work_grid(
+        inputs, max_cells=max_cells, default_crs=source_crs,
+        anchor_lon=anchor_lon, anchor_lat=anchor_lat,
+        dx_hint=dx_hint, dy_hint=dy_hint)
     info = {}
     for key in ("zb", "zl", "hw"):
         arr = arrays[key]
@@ -686,6 +718,10 @@ def parse_args(argv):
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--input-dir", default="", help="输入数据目录（默认 <job-dir>/inputs）")
     parser.add_argument("--source-crs", default="", help="asc/txt 输入的坐标系，如 EPSG:32647")
+    parser.add_argument("--anchor-lon", type=float, default=None,
+                        help="无地理头部 txt/asc 的网格中心经度（WGS84，如易贡 94.9629943）")
+    parser.add_argument("--anchor-lat", type=float, default=None,
+                        help="无地理头部 txt/asc 的网格中心纬度（WGS84，如易贡 30.1975837）")
     parser.add_argument("--static-dir", default="")
     parser.add_argument("--out-subdir", default="pro")
     parser.add_argument("--out-base", default="")
@@ -714,7 +750,10 @@ def main(argv=None):
 
     if args.probe:
         try:
-            result = probe_inputs(job_dir, args.input_dir, args.source_crs)
+            result = probe_inputs(
+                job_dir, args.input_dir, args.source_crs,
+                anchor_lon=args.anchor_lon, anchor_lat=args.anchor_lat,
+                dx_hint=args.dx, dy_hint=args.dy)
             print("PROBE_JSON=" + json.dumps(result, ensure_ascii=False))
             return 0
         except Exception as exc:

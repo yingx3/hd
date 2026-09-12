@@ -1,0 +1,38 @@
+server:
+  port: 8088
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgis?useSSL=false
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  servlet:
+    multipart:
+      # Pro 模型（洪水泥石流启动）输入支持 txt/asc（ESRI ASCII 未压缩，单文件可达数十 MB）
+      max-file-size: 500MB
+      max-request-size: 1GB
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+
+# 部署机配置（启动时使用 --spring.profiles.active=deploy 激活）
+app:
+  project-root: E:/ZHLXT/hd/hd-mao_0322
+  static-dir: E:/ZHLXT/nginx-1.26.2/nginx-1.26.2/html
+  python-exe: E:/ZHLXT/hd/hd-mao_0322/scripts/python/python.exe
+  conda-python-exe: C:/01_Zhang_king/miniconda3/envs/pytorch/python.exe
+  inference-script: E:/ZHLXT/demo/src/assets/src/inference.py
+  transformer-script: E:/ZHLXT/hd/hd-mao_0322/suanfa/dzd/scripts/transformer1d.py
+  avaflow:
+    wsl-home: //wsl.localhost/Ubuntu-20.04/home/wm
+    wsl-linux-home: /home/wm
+    jobs-root: //wsl.localhost/Ubuntu-20.04/home/wm/avaflow_jobs
+    source-crs: EPSG:32647
+    grass-gisdbase: /home/wm/grassdata/demo1/PERMANENT
+    static-dir: E:/ZHLXT/nginx-1.26.2/nginx-1.26.2/html
+    timeout: 1800
+    phases: 3
+    friction: "15,0,0,15,0,0,0,0,0.05"
+    time: "10,400"
+    expected-frames: 41
+    profile: "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"

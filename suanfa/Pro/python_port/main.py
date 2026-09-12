@@ -40,6 +40,9 @@ def main(userName, taskName, sufB, sufL, sufW, sufP, output_fn=None):
 
     k = 1
     T = [0.0]
+    # 收敛判据需要两层同时接近静止，并连续保持若干步；
+    # 原判据 ``max(A)>0 且 max(B)<1`` 会在泥石流层仍在运动时被水层触发而提前退出。
+    still_steps = 0
 
     while max(T) < Par[7]:
         dt = time_step(Uw, Us)
@@ -64,7 +67,13 @@ def main(userName, taskName, sufB, sufL, sufW, sufP, output_fn=None):
                 # 自定义回调带上当前模拟时刻，便于按时间抽帧（doput 路径行为不变）
                 output_fn(Uw, Us, T[k - 1])
 
-        if bool(np.max(A)) and (np.max(B) < 1):
-            break
+        max_solid_speed = float(np.max(A)) if A.size else 0.0
+        max_water_speed = float(np.max(B)) if B.size else 0.0
+        if max_solid_speed < 1.0 and max_water_speed < 1.0:
+            still_steps += 1
+            if still_steps >= 5:
+                break
+        else:
+            still_steps = 0
 
     print("end")

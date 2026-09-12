@@ -1150,14 +1150,53 @@ public class AdminUserController {
         return dir;
     }
 
-    /** 是否已上传 zb/zl/hw 三幅 tif 到 <jobDir>/inputs。 */
+    /** Pro 模型输入允许的扩展名：tif/tiff 走 GDAL，asc/txt 走 ESRI ASCII 头部。 */
+    private static final List<String> PRO_INPUT_EXTS = Arrays.asList("tif", "tiff", "asc", "txt");
+
+    /** 取上传文件名的扩展名；不在白名单内时按 tif 处理。 */
+    private static String proInputExt(String originalName) {
+        if (originalName != null) {
+            int dot = originalName.lastIndexOf('.');
+            if (dot >= 0 && dot < originalName.length() - 1) {
+                String ext = originalName.substring(dot + 1).toLowerCase(Locale.ROOT);
+                if (PRO_INPUT_EXTS.contains(ext)) {
+                    return ext;
+                }
+            }
+        }
+        return "tif";
+    }
+
+    /** 上传落盘文件名：保留原扩展名，形如 zb.txt / hw.asc / zl.tif。 */
+    private static String proInputFileName(String key, String originalName) {
+        return key + "." + proInputExt(originalName);
+    }
+
+    /** 删除同名的其它扩展名残留，避免重复上传时新旧格式同时存在。 */
+    private static void removeOtherProInputs(File inputDir, String key, String keepName) {
+        for (String ext : PRO_INPUT_EXTS) {
+            File stale = new File(inputDir, key + "." + ext);
+            if (!stale.getName().equals(keepName) && stale.isFile() && !stale.delete()) {
+                System.err.println("[pro_upload] 旧输入清理失败: " + stale.getAbsolutePath());
+            }
+        }
+    }
+
+    /** 是否已上传 zb/zl/hw 三幅输入（tif/tiff/asc/txt 任一格式）到 <jobDir>/inputs。 */
     private static boolean hasUploadedProInputs(File inputDir) {
         if (inputDir == null || !inputDir.isDirectory()) {
             return false;
         }
-        for (String name : Arrays.asList("zb.tif", "zl.tif", "hw.tif")) {
-            File f = new File(inputDir, name);
-            if (!f.isFile() || f.length() == 0) {
+        for (String key : Arrays.asList("zb", "zl", "hw")) {
+            boolean found = false;
+            for (String ext : PRO_INPUT_EXTS) {
+                File f = new File(inputDir, key + "." + ext);
+                if (f.isFile() && f.length() > 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
                 return false;
             }
         }
@@ -1177,6 +1216,22 @@ public class AdminUserController {
             return Double.parseDouble(String.valueOf(v).trim());
         } catch (NumberFormatException e) {
             return fallback;
+        }
+    }
+
+    /** 先查 params，再查 body 顶层的可选数值；用于无头部 txt 的网格中心经纬度锚点。 */
+    private static Double optNum(Map<String, Object> map, String key, Map<String, Object> fallbackMap) {
+        Object v = map == null ? null : map.get(key);
+        if (v == null && fallbackMap != null) {
+            v = fallbackMap.get(key);
+        }
+        if (v == null) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
@@ -1201,6 +1256,7 @@ public class AdminUserController {
     /**
      * 上传 Pro 模型的三幅输入栅格（灾前地形 / 灾后地形 / 初始水深），并立即探测网格信息。
      * 支持命名部件 zb/zl/hw，也支持 files[] 按文件名自动识别。
+     * 输入格式支持 GeoTIFF（tif/tiff）与带 ESRI ASCII 头部的文本（asc/txt），落盘时保留原扩展名。
      */
     @PostMapping("/pro_upload")
     public ResponseEntity<?> uploadProInputs(
@@ -1208,7 +1264,10 @@ public class AdminUserController {
             @RequestParam(value = "zl", required = false) MultipartFile zl,
             @RequestParam(value = "hw", required = false) MultipartFile hw,
             @RequestParam(value = "files", required = false) MultipartFile[] files,
-            @RequestParam(value = "jobId", required = false) String requestedJobId) {
+            @RequestParam(value = "jobId", required = false) String requestedJobId,
+            @RequestParam(value = "sourceCrs", required = false) String sourceCrs,
+            @RequestParam(value = "anchorLon", required = false) String anchorLon,
+            @RequestParam(value = "anchorLat", required = false) String anchorLat) {
         try {
             String jobId = (requestedJobId == null || requestedJobId.trim().isEmpty())
                     ? "pro_" + System.currentTimeMillis() + "_"
@@ -1257,17 +1316,34 @@ public class AdminUserController {
                 }
             }
 
+            Map<String, String> savedInputs = new LinkedHashMap<>();
             for (Map.Entry<String, MultipartFile> e : picked.entrySet()) {
-                File target = new File(inputDir, e.getKey() + ".tif");
+                // 保留原始扩展名：txt/asc（ESRI ASCII）不再被强行改名成 .tif
+                String fileName = proInputFileName(e.getKey(), e.getValue().getOriginalFilename());
+                removeOtherProInputs(inputDir, e.getKey(), fileName);
+                File target = new File(inputDir, fileName);
                 e.getValue().transferTo(target);
+                savedInputs.put(e.getKey(), fileName);
             }
 
             Map<String, Object> resp = new LinkedHashMap<>();
             resp.put("status", "ok");
             resp.put("jobId", jobId);
+            resp.put("inputs", savedInputs);
 
+            String probeCrs = (sourceCrs == null || sourceCrs.trim().isEmpty()) ? proSourceCrs : sourceCrs.trim();
+            List<String> probeCmd = new ArrayList<>(Arrays.asList(
+                    pythonExe, proScriptPath(), "--probe", "--job-dir", jobDir.getAbsolutePath(),
+                    "--source-crs", probeCrs));
+            if (anchorLon != null && !anchorLon.trim().isEmpty()
+                    && anchorLat != null && !anchorLat.trim().isEmpty()) {
+                probeCmd.add("--anchor-lon");
+                probeCmd.add(anchorLon.trim());
+                probeCmd.add("--anchor-lat");
+                probeCmd.add(anchorLat.trim());
+            }
             ProcessResult pr = runProcess(
-                    Arrays.asList(pythonExe, proScriptPath(), "--probe", "--job-dir", jobDir.getAbsolutePath()),
+                    probeCmd,
                     new File(projectRoot), 300, "[pro_probe] ", StandardCharsets.UTF_8);
             String probeJson = extractSentinel(pr.output, "PROBE_JSON=");
             if (probeJson.isEmpty()) {
@@ -1318,7 +1394,7 @@ public class AdminUserController {
                     .body("\u65e0\u6cd5\u521b\u5efa\u4efb\u52a1\u76ee\u5f55: " + e.getMessage());
         }
 
-        // 输入来源：优先用上传到 <jobDir>/inputs 的 tif，
+        // 输入来源：优先用上传到 <jobDir>/inputs 的输入文件（tif/tiff/asc/txt），
         // 否则用请求指定 / 配置默认的任务数据目录（zB/zL/hW.txt 等）
         final File inputDir;
         File uploadedInputs = new File(jobDir, "inputs");
@@ -1354,6 +1430,8 @@ public class AdminUserController {
         }
         final String fieldArg = field;
         final String targetCrs = str(params, "targetCrs");
+        final Double anchorLon = optNum(params, "anchorLon", body);
+        final Double anchorLat = optNum(params, "anchorLat", body);
 
         File outDir = new File(new File(avaflowStaticDir, proStaticSubdir), jobId);
         final File framesDir = new File(outDir, "frames");
@@ -1404,6 +1482,12 @@ public class AdminUserController {
                     cmd.add("--target-crs");
                     cmd.add(targetCrs);
                 }
+                if (anchorLon != null && anchorLat != null) {
+                    cmd.add("--anchor-lon");
+                    cmd.add(String.valueOf(anchorLon));
+                    cmd.add("--anchor-lat");
+                    cmd.add(String.valueOf(anchorLat));
+                }
 
                 ProcessResult pr = runProcess(cmd, new File(projectRoot), proTimeoutSeconds, "[pro] ", StandardCharsets.UTF_8);
                 String resultJson = extractSentinel(pr.output, "PRO_RESULT_JSON=");
@@ -1429,9 +1513,15 @@ public class AdminUserController {
                 Map<String, Object> meta = (result.get("meta") instanceof Map)
                         ? (Map<String, Object>) result.get("meta")
                         : Collections.<String, Object>emptyMap();
-                String sourceCrs = (meta.get("sourceCrs") == null || String.valueOf(meta.get("sourceCrs")).isEmpty())
-                        ? avaflowSourceCrs
-                        : String.valueOf(meta.get("sourceCrs"));
+                String sourceCrs = (meta.get("sourceCrs") == null)
+                        ? ""
+                        : String.valueOf(meta.get("sourceCrs")).trim();
+                if (sourceCrs.isEmpty()) {
+                    job.put("status", "error");
+                    job.put("phase", "error");
+                    job.put("message", "\u8f93\u51fa\u6805\u683c\u7f3a\u5c11\u5750\u6807\u7cfb\uff1a\u65e0\u5934\u90e8 txt \u5fc5\u987b\u5728\u754c\u9762\u586b\u5199\u7f51\u683c\u4e2d\u5fc3\u7ecf\u7eac\u5ea6\u4e0e\u6570\u636e\u5750\u6807\u7cfb\uff08\u5982 EPSG:32646\uff09\u540e\u518d\u8fd0\u884c");
+                    return;
+                }
 
                 Map<String, Object> conv = prepareProFrames(framesDir, prefix, jobId, sourceCrs);
                 int frameCount = ((Number) conv.get("frameCount")).intValue();
