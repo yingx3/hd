@@ -546,9 +546,15 @@ def run_simulation(job_dir, args):
                 pass
 
     expected_calls = max(1, int(math.ceil(tmax / max(interval, 1e-6))) + 1)
-    stride = max(1, int(math.ceil(expected_calls / max(1, int(args.max_frames)))))
+    max_frames = max(1, int(args.max_frames))
+    # 输出节拍：至少 interval 秒一帧，且 [0, tmax] 内不超过 max_frames 帧。
+    # 按「模拟时刻」而不是「调用次数」抽帧，提前收敛结束时也不会白丢帧。
+    bucket = max(interval, tmax / float(max(1, max_frames - 1)))
+    log("输出节拍 %.4gs/帧（interval=%.4g, tmax/max_frames=%.4g）"
+        % (bucket, interval, tmax / float(max(1, max_frames - 1))))
 
-    state = {"calls": 0, "written": 0, "global_max": 0.0, "last_field": None, "t0": time.time()}
+    state = {"calls": 0, "written": 0, "global_max": 0.0, "last_field": None,
+             "bucket": -1, "t0": time.time()}
 
     def write_frame(matrix):
         state["written"] += 1
@@ -557,16 +563,27 @@ def run_simulation(job_dir, args):
         state["global_max"] = max(state["global_max"], float(np.max(matrix)) if matrix.size else 0.0)
         return path
 
-    def output_fn(Uw, Us):
+    def output_fn(Uw, Us, t=None):
         state["calls"] += 1
         matrix = field_of(Uw, Us, args.field)
         state["last_field"] = matrix
-        if stride > 1 and (state["calls"] - 1) % stride != 0:
-            return
-        if state["written"] >= int(args.max_frames):
+
+        if t is None:
+            # 内核未回传模拟时刻时退化为按调用次数抽帧
+            stride = max(1, int(math.ceil(expected_calls / float(max_frames))))
+            if stride > 1 and (state["calls"] - 1) % stride != 0:
+                return
+        else:
+            index = int(math.floor(float(t) / bucket + 1e-9))
+            if index == state["bucket"]:
+                return
+            state["bucket"] = index
+
+        if state["written"] >= max_frames:
             return
         write_frame(matrix)
-        percent = min(96.0, 100.0 * state["calls"] / float(expected_calls))
+        percent = (min(96.0, 100.0 * float(t) / tmax) if t is not None
+                   else min(96.0, 100.0 * state["calls"] / float(expected_calls)))
         emit_progress(job_dir, stage="simulation", percent=round(percent, 1),
                       frame=state["written"],
                       elapsedSeconds=round(time.time() - state["t0"], 1),

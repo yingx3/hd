@@ -57,11 +57,12 @@ def main(userName, taskName, sufB, sufL, sufW, sufP, output_fn=None):
         t1 = math.floor(T[k - 2] / g.Interval)
         t2 = math.floor(T[k - 1] / g.Interval)
 
-        if T[k - 1] - T[k - 2] > g.Interval:
-            write(Uw, Us)
-        else:
-            if t2 != t1:
+        if T[k - 1] - T[k - 2] > g.Interval or t2 != t1:
+            if output_fn is None:
                 write(Uw, Us)
+            else:
+                # 自定义回调带上当前模拟时刻，便于按时间抽帧（doput 路径行为不变）
+                output_fn(Uw, Us, T[k - 1])
 
         if bool(np.max(A)) and (np.max(B) < 1):
             break
