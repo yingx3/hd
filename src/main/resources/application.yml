@@ -42,7 +42,7 @@ app:
     # profile.巴宜区: "..."
     # profile.波密县: "..."
 
-  # 山洪泥石流启动动力学模型（Pro / suanfa/Pro/python_port 数值内核）
+  # 洪水泥石流启动动力学模型（Pro / suanfa/Pro/python_port 数值内核）
   pro:
     # 任务目录（输入栅格 / work / progress.json）；留空即 <project-root>/suanfa/Pro/jobs
     jobs-root: ""
@@ -54,3 +54,7 @@ app:
     timeout: 3600
     # 默认最大输出帧数（超过则自动抽帧，保证动画流畅与出图速度）
     default-max-frames: 40
+    # 默认输入数据目录（zB/zL/hW 等）；相对路径相对于 project-root
+    default-input-dir: suanfa/Pro/user1/task
+    # asc/txt 输入的坐标系（头部无 EPSG 时用于解释平面坐标与换算 bbox）
+    source-crs: EPSG:32647

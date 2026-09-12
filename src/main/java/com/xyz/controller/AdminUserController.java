@@ -135,6 +135,12 @@ public class AdminUserController {
     @Value("${app.pro.default-max-frames:40}")
     private int proDefaultMaxFrames;
 
+    @Value("${app.pro.default-input-dir:}")
+    private String proDefaultInputDir;
+
+    @Value("${app.pro.source-crs:EPSG:32647}")
+    private String proSourceCrs;
+
     @PostMapping("/fx")
     public String fxmodelparam(@RequestBody FormData formData) throws  Exception {
         // 获取表单数据
@@ -1117,6 +1123,47 @@ public class AdminUserController {
                 : proScript.trim();
     }
 
+    /**
+     * Pro 输入数据目录：请求传入优先，其次取配置，都缺省时用
+     * suanfa/Pro/user1/task；必须位于 projectRoot 之下，避免任意路径读取。
+     */
+    private File resolveProInputDir(String requested) {
+        String raw = (requested == null || requested.trim().isEmpty()) ? proDefaultInputDir : requested;
+        if (raw == null || raw.trim().isEmpty()) {
+            raw = "suanfa/Pro/user1/task";
+        }
+        raw = raw.trim();
+        File base = new File(projectRoot).getAbsoluteFile();
+        File dir = new File(raw);
+        if (!dir.isAbsolute()) {
+            dir = new File(base, raw);
+        }
+        dir = dir.getAbsoluteFile();
+        String basePath = base.getPath();
+        String dirPath = dir.getPath();
+        if (!dirPath.equals(basePath) && !dirPath.startsWith(basePath + File.separator)) {
+            throw new IllegalArgumentException("\u8f93\u5165\u76ee\u5f55\u5fc5\u987b\u4f4d\u4e8e\u9879\u76ee\u6839\u76ee\u5f55\u5185: " + raw);
+        }
+        if (!dir.isDirectory()) {
+            throw new IllegalArgumentException("\u8f93\u5165\u76ee\u5f55\u4e0d\u5b58\u5728: " + dir.getAbsolutePath());
+        }
+        return dir;
+    }
+
+    /** 是否已上传 zb/zl/hw 三幅 tif 到 <jobDir>/inputs。 */
+    private static boolean hasUploadedProInputs(File inputDir) {
+        if (inputDir == null || !inputDir.isDirectory()) {
+            return false;
+        }
+        for (String name : Arrays.asList("zb.tif", "zl.tif", "hw.tif")) {
+            File f = new File(inputDir, name);
+            if (!f.isFile() || f.length() == 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static String proFrameName(String prefix, int index) {
         return String.format(Locale.ROOT, "%s_hflow%04d.asc", prefix, index);
     }
@@ -1249,21 +1296,43 @@ public class AdminUserController {
      */
     @PostMapping("/pro_start")
     public ResponseEntity<?> startProModel(@RequestBody Map<String, Object> body) {
+        String requestedJobId = str(body, "jobId");
         final String jobId;
-        try {
-            jobId = requireAvaflowJobId(str(body, "jobId"));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+        if (requestedJobId == null || requestedJobId.trim().isEmpty()) {
+            // 前端只回传参数时（无上传文件）由后端生成任务号
+            jobId = "pro_" + System.currentTimeMillis() + "_"
+                    + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        } else {
+            try {
+                jobId = requireAvaflowJobId(requestedJobId);
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(e.getMessage());
+            }
         }
 
         File jobDir = new File(proJobsRootDir(), jobId);
-        File inputDir = new File(jobDir, "inputs");
-        for (String name : Arrays.asList("zb.tif", "zl.tif", "hw.tif")) {
-            File required = new File(inputDir, name);
-            if (!required.isFile() || required.length() == 0) {
-                return ResponseEntity.badRequest().body("\u4efb\u52a1\u8f93\u5165\u4e0d\u5b8c\u6574: " + name);
+        try {
+            Files.createDirectories(jobDir.toPath());
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError()
+                    .body("\u65e0\u6cd5\u521b\u5efa\u4efb\u52a1\u76ee\u5f55: " + e.getMessage());
+        }
+
+        // 输入来源：优先用上传到 <jobDir>/inputs 的 tif，
+        // 否则用请求指定 / 配置默认的任务数据目录（zB/zL/hW.txt 等）
+        final File inputDir;
+        File uploadedInputs = new File(jobDir, "inputs");
+        if (hasUploadedProInputs(uploadedInputs)) {
+            inputDir = uploadedInputs;
+        } else {
+            try {
+                inputDir = resolveProInputDir(str(body, "inputDir"));
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(e.getMessage());
             }
         }
+        String requestedCrs = str(body, "sourceCrs");
+        final String inputSourceCrs = requestedCrs.isEmpty() ? proSourceCrs : requestedCrs;
 
         @SuppressWarnings("unchecked")
         Map<String, Object> params = (body.get("params") instanceof Map)
@@ -1314,6 +1383,8 @@ public class AdminUserController {
                 List<String> cmd = new ArrayList<>(Arrays.asList(
                         pythonExe, proScriptPath(),
                         "--job-dir", jobDir.getAbsolutePath(),
+                        "--input-dir", inputDir.getAbsolutePath(),
+                        "--source-crs", inputSourceCrs,
                         "--static-dir", avaflowStaticDir,
                         "--out-subdir", proStaticSubdir,
                         "--frames-dir", framesDir.getAbsolutePath(),

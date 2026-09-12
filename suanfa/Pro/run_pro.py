@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""山洪泥石流启动动力学模型（Pro）—— python_port 数值内核包装脚本。
+"""洪水泥石流启动动力学模型（Pro）—— python_port 数值内核包装脚本。
 
 职责：
-  1. 读取前端上传的三幅栅格：灾前地形 zb.tif / 灾后地形 zl.tif / 初始水深 hw.tif；
+  1. 读取三幅输入栅格：灾前地形 zb / 灾后地形 zl / 初始水深 hw
+     （tif/tiff，或带 ESRI ASCII 头部的 asc/txt；文件名大小写不敏感，
+      兼容 zB.txt / zL.txt / hW.txt 这类既有任务数据）；
   2. 统一到同一计算网格：经纬度输入自动重投影到 UTM，保证 ASC 的 cellsize 是米；
   3. 调用 python_port 的数值内核（main.py）求解双层浅水流（泥石流层 + 水层）；
   4. 每个输出时刻直接写出 Cesium / DebrisFlow 可渲染的 ESRI ASCII 帧，
@@ -10,8 +12,8 @@
 
 由后端 AdminUserController 调用：
 
-  # 上传后探测输入栅格（不计算）
-  python run_pro.py --probe --job-dir <jobDir>
+  # 探测输入栅格（不计算）；--input-dir 缺省时取 <jobDir>/inputs
+  python run_pro.py --probe --job-dir <jobDir> --input-dir <任务数据目录> --source-crs EPSG:32647
 
   # 正式计算
   python run_pro.py --job-dir <jobDir> --static-dir <nginxHtml> \
@@ -82,6 +84,115 @@ ASC_HEADER_KEYS = (
     "ncols", "nrows", "xllcorner", "yllcorner",
     "xllcenter", "yllcenter", "cellsize", "nodata_value",
 )
+
+# 输入栅格命名：zb(灾前地形) / zl(灾后地形) / hw(初始水深)
+INPUT_KEYS = ("zb", "zl", "hw")
+INPUT_STEMS = {
+    "zb": ("zb", "z_b", "zb_dem", "beforedem", "before", "pre", "elevation", "elev", "dem"),
+    "zl": ("zl", "z_l", "zl_dem", "afterdem", "after", "postdem", "post"),
+    "hw": ("hw", "h_w", "h0", "waterdepth", "water", "depth"),
+}
+INPUT_EXTS = (".tif", ".tiff", ".asc", ".txt")
+INPUT_EXT_PRIORITY = {".tif": 0, ".tiff": 1, ".asc": 2, ".txt": 3}
+
+
+def resolve_inputs(input_dir):
+    """在目录中定位 zb/zl/hw 三幅输入，返回 {key: 绝对路径}。
+
+    文件名大小写不敏感（兼容 zB.txt / zL.txt / hW.txt 这类既有任务数据），
+    扩展名支持 tif/tiff 与带 ESRI ASCII 头部的 asc/txt。
+    """
+    if not input_dir:
+        raise ValueError("未指定输入目录")
+    input_dir = os.path.abspath(input_dir)
+    if not os.path.isdir(input_dir):
+        raise ValueError("输入目录不存在: %s" % input_dir)
+
+    stems = {}
+    for name in sorted(os.listdir(input_dir)):
+        path = os.path.join(input_dir, name)
+        if not os.path.isfile(path):
+            continue
+        stem, ext = os.path.splitext(name)
+        ext = ext.lower()
+        if ext not in INPUT_EXTS:
+            continue
+        stems.setdefault(stem.lower(), []).append((ext, path))
+
+    resolved = {}
+    for key in INPUT_KEYS:
+        candidates = []
+        for alias in INPUT_STEMS[key]:
+            if alias in stems:
+                candidates = list(stems[alias])
+                break
+        if not candidates:
+            for stem, items in sorted(stems.items()):
+                if any(stem == a or stem.startswith(a + "_") or stem.startswith(a + "-")
+                       for a in INPUT_STEMS[key]):
+                    candidates = list(items)
+                    break
+        if candidates:
+            candidates.sort(key=lambda item: INPUT_EXT_PRIORITY.get(item[0], 9))
+            resolved[key] = candidates[0][1]
+
+    missing = [k for k in INPUT_KEYS if k not in resolved]
+    if missing:
+        raise ValueError("输入目录 %s 缺少 %s 栅格（目录内可用: %s）"
+                         % (input_dir, "/".join(missing), ", ".join(sorted(stems)) or "无"))
+    return resolved
+
+
+def _crs_from_name(name):
+    """EPSG:xxxx / WKT / proj 串 -> (crs, 规范名称, wkt)；解析失败返回 (None, name, None)。"""
+    if not name:
+        return None, None, None
+    name = str(name).strip()
+    try:
+        from rasterio.crs import CRS
+        crs = CRS.from_user_input(name)
+    except Exception:
+        return None, name, None
+    try:
+        code = crs.to_epsg()
+    except Exception:
+        code = None
+    return crs, (("EPSG:%d" % code) if code else name), crs.to_wkt()
+
+
+def asc_header_georef(header, default_crs=None):
+    """从 ESRI ASCII 头部还原 (transform, crs)；信息不足时返回 (None, None)。"""
+    if not header:
+        return None, None
+    cellsize = header.get("cellsize")
+    if cellsize is None:
+        cellsize = header.get("dx", header.get("dy"))
+    try:
+        cellsize = float(cellsize)
+        nrows = int(header.get("nrows"))
+    except (TypeError, ValueError):
+        return None, None
+    if not cellsize:
+        return None, None
+
+    if header.get("xllcorner") is not None:
+        xll = float(header["xllcorner"])
+    elif header.get("xllcenter") is not None:
+        xll = float(header["xllcenter"]) - cellsize / 2.0
+    else:
+        xll = None
+    if header.get("yllcorner") is not None:
+        yll = float(header["yllcorner"])
+    elif header.get("yllcenter") is not None:
+        yll = float(header["yllcenter"]) - cellsize / 2.0
+    else:
+        yll = None
+    if xll is None or yll is None:
+        return None, None
+
+    transform = (cellsize, 0.0, xll, 0.0, -cellsize, yll + cellsize * nrows)
+    crs, _name, _wkt = _crs_from_name(default_crs)
+    return transform, crs
 
 # 渲染场：总流深 / 水层深度 / 泥石流层厚度 / 流速
 FIELD_CHOICES = ("total", "water", "solid", "speed")
@@ -163,26 +274,53 @@ def _open_raster(path):
     return rasterio.open(path)
 
 
-def read_raster(path):
-    """读取单波段栅格，返回 (数组, 元信息)。nodata -> nan。"""
+def read_raster(path, default_crs=None):
+    """读取单波段栅格，返回 (数组, 元信息)。nodata -> nan。
+
+    tif/tiff 直接读地理参考；asc/txt 尝试解析 ESRI ASCII 头部，
+    头部没有坐标系时用 default_crs（--source-crs）解释其平面坐标。
+    """
     if not os.path.isfile(path):
         raise FileNotFoundError("输入栅格不存在: %s" % path)
     ext = os.path.splitext(path)[1].lower()
     if ext not in (".tif", ".tiff"):
         arr, header = read_matrix_file(path)
+        nodata = None
+        if header and header.get("nodata_value") is not None:
+            nodata = float(header["nodata_value"])
+            bad = int(np.count_nonzero(arr == nodata))
+            if bad:
+                arr = np.where(arr == nodata, np.nan, arr)
+                log("%s 中 %d 个 NODATA 值按无效处理" % (os.path.basename(path), bad))
+        transform, crs = asc_header_georef(header, default_crs)
+        crs_name, crs_wkt = epsg_name(crs)
+        if crs_name is None and default_crs:
+            crs_name = str(default_crs)
+        bounds = None
+        res = None
+        if transform is not None:
+            res = (abs(transform[0]), abs(transform[4]))
+            left, top = transform[2], transform[5]
+            bounds = (left, top + transform[4] * arr.shape[0],
+                      left + transform[0] * arr.shape[1], top)
         return arr, {
             "ncols": arr.shape[1], "nrows": arr.shape[0],
-            "crs": None, "epsg": None, "transform": None,
-            "res": None, "header": header,
+            "crs": crs, "crsName": crs_name, "crsWkt": crs_wkt,
+            "epsg": (crs.to_epsg() if crs is not None else None),
+            "transform": transform, "res": res, "bounds": bounds,
+            "nodata": nodata, "header": header,
         }
 
     with _open_raster(path) as ds:
         band = ds.read(1, masked=True).astype(np.float64)
         arr = np.asarray(band.filled(np.nan), dtype=np.float64)
+        crs_name, crs_wkt = epsg_name(ds.crs)
         profile = {
             "ncols": ds.width,
             "nrows": ds.height,
             "crs": ds.crs,
+            "crsName": crs_name,
+            "crsWkt": crs_wkt,
             "epsg": (ds.crs.to_epsg() if ds.crs is not None else None),
             "transform": tuple(ds.transform)[:6],
             "res": (abs(ds.transform.a), abs(ds.transform.e)),
@@ -193,40 +331,39 @@ def read_raster(path):
 
 
 def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
-                      resample_method="bilinear"):
+                      resample_method="bilinear", default_crs=None):
     """把三幅输入栅格统一到同一个（米制）计算网格。
 
     返回 (arrays, grid)，grid 含 transform/ncols/nrows/crs/dx/dy。
+    default_crs 用于给「带 ASCII 头部但无坐标系」的 asc/txt 输入指定坐标系。
     """
     from rasterio.warp import calculate_default_transform, reproject, Resampling
     import rasterio.transform as rio_transform
     from rasterio.crs import CRS
 
-    arr_b, info_b = read_raster(inputs["zb"])
-    arr_l, info_l = read_raster(inputs["zl"])
-    arr_w, info_w = read_raster(inputs["hw"])
+    arr_b, info_b = read_raster(inputs["zb"], default_crs)
+    arr_l, info_l = read_raster(inputs["zl"], default_crs)
+    arr_w, info_w = read_raster(inputs["hw"], default_crs)
 
     src_crs = info_b["crs"]
     src_transform = rio_transform.Affine(*info_b["transform"]) if info_b["transform"] else None
 
     target_crs = None
-    if target_crs_override:
-        target_crs = CRS.from_user_input(target_crs_override)
-    elif src_crs is not None:
-        if src_crs.is_geographic:
+    reproject_needed = False
+    if src_transform is not None and src_crs is not None:
+        if target_crs_override:
+            target_crs = CRS.from_user_input(target_crs_override)
+        elif src_crs.is_geographic:
             # 经纬度网格：重投影到 UTM，保证 ASC 以米为单元格尺寸
             lon = (info_b["bounds"][0] + info_b["bounds"][2]) / 2.0
             lat = (info_b["bounds"][1] + info_b["bounds"][3]) / 2.0
             target_crs = CRS.from_epsg(utm_epsg(lon, lat))
         else:
             target_crs = src_crs
-
-    reproject_needed = (
-        src_transform is None
-        or target_crs is None
-        or src_crs is None
-        or target_crs != src_crs
-    )
+        reproject_needed = (target_crs != src_crs)
+    elif src_transform is not None and target_crs_override:
+        # 只有平面坐标、无法重投影：沿用源网格，仅按指定坐标系解释（不插值）
+        target_crs = CRS.from_user_input(target_crs_override)
 
     if src_transform is None:
         # 无地理参考：直接按矩阵下标计算，要求三幅栅格形状一致
@@ -263,8 +400,10 @@ def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
     def to_target(arr, info, fill=0.0):
         if info["transform"] is None:
             return resample_by_index(arr, dst_h, dst_w)
-        if (not reproject_needed) and arr.shape == (dst_h, dst_w):
-            return np.array(arr, dtype=np.float64)
+        if not reproject_needed:
+            if arr.shape == (dst_h, dst_w):
+                return np.array(arr, dtype=np.float64)
+            return resample_by_index(arr, dst_h, dst_w)
         dst = np.full((dst_h, dst_w), fill, dtype=np.float64)
         src = np.array(arr, dtype=np.float64)
         sentinel = -9999.0
@@ -285,6 +424,8 @@ def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
     }
 
     crs_name, crs_wkt = epsg_name(target_crs)
+    if crs_name is None:
+        crs_name, crs_wkt = info_b.get("crsName"), info_b.get("crsWkt")
     dx = abs(dst_transform.a)
     dy = abs(dst_transform.e)
     grid = {
@@ -367,9 +508,12 @@ def write_asc(path, matrix, grid):
 
 def run_simulation(job_dir, args):
     """执行算法并把每个输出时刻写成 ASC 帧。"""
+    input_dir = os.path.abspath(args.input_dir) if args.input_dir else os.path.join(job_dir, "inputs")
+    inputs = resolve_inputs(input_dir)
+    log("输入目录 %s -> %s"
+        % (input_dir, ", ".join("%s=%s" % (k, os.path.basename(inputs[k])) for k in INPUT_KEYS)))
     arrays, grid = prepare_work_grid(
-        {k: os.path.join(job_dir, "inputs", k + ".tif") for k in ("zb", "zl", "hw")},
-        target_crs_override=args.target_crs)
+        inputs, target_crs_override=args.target_crs, default_crs=args.source_crs)
 
     # python_port 的 main() 从 basePath 下按 txt 读取输入
     work_dir = os.path.join(job_dir, "work")
@@ -471,9 +615,10 @@ def run_simulation(job_dir, args):
 # --------------------------------------------------------------------------- #
 # 输入探测（上传后立刻给出网格 / 坐标系摘要）
 # --------------------------------------------------------------------------- #
-def probe_inputs(job_dir, max_cells=1_000_000):
-    inputs = {k: os.path.join(job_dir, "inputs", k + ".tif") for k in ("zb", "zl", "hw")}
-    arrays, grid = prepare_work_grid(inputs, max_cells=max_cells)
+def probe_inputs(job_dir, input_dir="", source_crs="", max_cells=1_000_000):
+    target_dir = input_dir or os.path.join(job_dir, "inputs")
+    inputs = resolve_inputs(target_dir)
+    arrays, grid = prepare_work_grid(inputs, max_cells=max_cells, default_crs=source_crs)
     info = {}
     for key in ("zb", "zl", "hw"):
         arr = arrays[key]
@@ -500,6 +645,8 @@ def probe_inputs(job_dir, max_cells=1_000_000):
     water = float(np.nanmax(arrays["hw"])) if arrays["hw"].size else 0.0
     return {
         "status": "ok",
+        "inputDir": os.path.abspath(target_dir),
+        "files": {k: os.path.basename(inputs[k]) for k in INPUT_KEYS},
         "ncols": grid["ncols"],
         "nrows": grid["nrows"],
         "dx": round(grid["dx"], 6),
@@ -517,9 +664,11 @@ def probe_inputs(job_dir, max_cells=1_000_000):
 # CLI
 # --------------------------------------------------------------------------- #
 def parse_args(argv):
-    parser = argparse.ArgumentParser(description="山洪泥石流启动动力学模型(python_port)")
+    parser = argparse.ArgumentParser(description="洪水泥石流启动动力学模型(python_port)")
     parser.add_argument("--job-dir", required=True)
     parser.add_argument("--probe", action="store_true")
+    parser.add_argument("--input-dir", default="", help="输入数据目录（默认 <job-dir>/inputs）")
+    parser.add_argument("--source-crs", default="", help="asc/txt 输入的坐标系，如 EPSG:32647")
     parser.add_argument("--static-dir", default="")
     parser.add_argument("--out-subdir", default="pro")
     parser.add_argument("--out-base", default="")
@@ -548,7 +697,7 @@ def main(argv=None):
 
     if args.probe:
         try:
-            result = probe_inputs(job_dir)
+            result = probe_inputs(job_dir, args.input_dir, args.source_crs)
             print("PROBE_JSON=" + json.dumps(result, ensure_ascii=False))
             return 0
         except Exception as exc:
