@@ -768,9 +768,9 @@ def parse_args(argv):
     parser.add_argument("--input-dir", default="", help="输入数据目录（默认 <job-dir>/inputs）")
     parser.add_argument("--source-crs", default="", help="asc/txt 输入的坐标系，如 EPSG:32647")
     parser.add_argument("--anchor-lon", type=float, default=None,
-                        help="无地理头部 txt/asc 的源区中心经度（WGS84，如易贡 94.9629943）")
+                        help="无地理头部 txt/asc 的源区中心经度（WGS84，如易贡 95.0020）")
     parser.add_argument("--anchor-lat", type=float, default=None,
-                        help="无地理头部 txt/asc 的源区中心纬度（WGS84，如易贡 30.1975837）")
+                        help="无地理头部 txt/asc 的源区中心纬度（WGS84，如易贡 30.2354）")
     parser.add_argument("--static-dir", default="")
     parser.add_argument("--out-subdir", default="pro")
     parser.add_argument("--out-base", default="")
