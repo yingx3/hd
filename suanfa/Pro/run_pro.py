@@ -514,6 +514,95 @@ def prepare_work_grid(inputs, target_crs_override=None, max_cells=1_000_000,
     return grid_arrays, grid
 
 
+def load_terrain_edits(path):
+    """读取前端提交的地形调控指令（手绘封闭多边形 + 加高值）。"""
+    if not path:
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        log("地形调控文件读取失败(%s)，按未修改地形计算: %s" % (path, exc))
+        return []
+    edits = []
+    if isinstance(data, dict):
+        data = data.get("edits") or []
+    for item in data or []:
+        if not isinstance(item, dict):
+            continue
+        ring = item.get("polygon") or []
+        pts = []
+        for pt in ring:
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                try:
+                    pts.append((float(pt[0]), float(pt[1])))
+                except (TypeError, ValueError):
+                    continue
+        if len(pts) < 3:
+            continue
+        try:
+            raise_m = float(item.get("raise", 0.0))
+        except (TypeError, ValueError):
+            continue
+        edits.append({"polygon": pts, "raise": raise_m})
+    return edits
+
+
+def apply_terrain_edits(arrays, grid, edits):
+    """把封闭多边形内的地形整体抬高 raise 米（工程措施：拦挡坝 / 固床护底 / 导流堤）。
+
+    底床 g.z 取的是 zL，所以抬高 zL 才是「筑起障碍、让流翻过去」；
+    同时用 zB = max(zB, zL) 兜底，保证物源厚度 zB - zL 不出现负值
+    （负厚度会污染求解器，见 solver.Init）。
+    """
+    if not edits:
+        return []
+    if grid.get("crs") is None or grid.get("transform") is None:
+        log("地形调控跳过：当前网格缺少坐标系")
+        return []
+    try:
+        import rasterio.transform as rio_transform
+        from rasterio.features import rasterize
+        from rasterio.warp import transform_geom
+    except Exception as exc:
+        log("地形调控跳过：rasterio 不可用 (%s)" % exc)
+        return []
+
+    zb = arrays["zb"]
+    zl = arrays["zl"]
+    transform = rio_transform.Affine(*grid["transform"])
+    out_shape = (int(grid["nrows"]), int(grid["ncols"]))
+    applied = []
+    for idx, edit in enumerate(edits, 1):
+        geom = {"type": "Polygon",
+                "coordinates": [[[float(x), float(y)] for (x, y) in edit["polygon"]]]}
+        try:
+            geom = transform_geom("EPSG:4326", grid["crs"], geom)
+        except Exception as exc:
+            log("地形调控 #%d 坐标转换失败: %s" % (idx, exc))
+            continue
+        mask = rasterize(
+            [(geom, 1)], out_shape=out_shape, transform=transform,
+            fill=0, all_touched=True, dtype="uint8",
+        ).astype(bool)
+        n = int(mask.sum())
+        if n == 0:
+            log("地形调控 #%d: 多边形不在计算网格范围内，已忽略" % idx)
+            continue
+        raise_m = float(edit["raise"])
+        zl[mask] = zl[mask] + raise_m
+        zb[mask] = np.maximum(zb[mask], zl[mask])
+        applied.append({"index": idx, "raise": round(raise_m, 3), "cells": n})
+        log("地形调控 #%d: 加高 %.3fm，影响 %d 个网格（%.0fm x %.0fm）"
+            % (idx, raise_m, n, n * grid["dx"], n * grid["dy"]))
+
+    if applied:
+        hS = np.asarray(zb, dtype=np.float64) - np.asarray(zl, dtype=np.float64)
+        log("地形调控后 物源厚度 zB-zL: min=%.3f max=%.3f（应 >= 0）"
+            % (float(np.min(hS)), float(np.max(hS))))
+    return applied
+
+
 def resample_by_index(arr, nrows, ncols):
     """无地理参考时的最近邻重采样（仅用于形状不一致的兜底）。"""
     src_r, src_c = arr.shape
@@ -591,6 +680,10 @@ def run_simulation(job_dir, args):
         inputs, target_crs_override=args.target_crs, default_crs=args.source_crs,
         anchor_lon=args.anchor_lon, anchor_lat=args.anchor_lat,
         dx_hint=args.dx, dy_hint=args.dy)
+
+    # 地形调控：把前端手绘范围抬高后再跑动力学计算
+    terrain_edits = load_terrain_edits(getattr(args, "terrain_edits", ""))
+    terrain_applied = apply_terrain_edits(arrays, grid, terrain_edits)
 
     # python_port 的 main() 从 basePath 下按 txt 读取输入
     work_dir = os.path.join(job_dir, "work")
@@ -700,6 +793,7 @@ def run_simulation(job_dir, args):
         "params": params,
         "framesDir": frames_dir,
         "outBase": args.out_base,
+        "terrainEdits": terrain_applied,
     }
     dump_json(os.path.join(frames_dir, "frames_meta.json"), meta)
     log("计算完成，共 %d 帧，最大 %s = %.4f" % (state["written"], args.field, state["global_max"]))
@@ -787,6 +881,8 @@ def parse_args(argv):
     parser.add_argument("--max-frames", default=40)
     parser.add_argument("--field", default="total", choices=list(FIELD_CHOICES))
     parser.add_argument("--target-crs", default="")
+    parser.add_argument("--terrain-edits", default="",
+                        help="地形调控 JSON：[[{polygon:[[lon,lat],...], raise:米}], ...]")
     return parser.parse_args(argv)
 
 

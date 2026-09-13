@@ -1433,6 +1433,22 @@ public class AdminUserController {
         final Double anchorLon = optNum(params, "anchorLon", body);
         final Double anchorLat = optNum(params, "anchorLat", body);
 
+        // Terrain regulation: painted polygons + raise value submitted by the frontend.
+        Object terrainEditsRaw = body.get("terrainEdits");
+        if (terrainEditsRaw == null) {
+            terrainEditsRaw = params.get("terrainEdits");
+        }
+        final boolean hasTerrainEdits = (terrainEditsRaw instanceof Collection)
+                && !((Collection<?>) terrainEditsRaw).isEmpty();
+        final File terrainEditsFile = new File(jobDir, "terrain_edits.json");
+        if (hasTerrainEdits) {
+            try {
+                OBJECT_MAPPER.writeValue(terrainEditsFile, terrainEditsRaw);
+            } catch (IOException e) {
+                return ResponseEntity.badRequest().body("\u5730\u5f62\u8c03\u63a7\u53c2\u6570\u5199\u5165\u5931\u8d25: " + e.getMessage());
+            }
+        }
+
         File outDir = new File(new File(avaflowStaticDir, proStaticSubdir), jobId);
         final File framesDir = new File(outDir, "frames");
         if (!framesDir.isDirectory() && !framesDir.mkdirs()) {
@@ -1487,6 +1503,10 @@ public class AdminUserController {
                     cmd.add(String.valueOf(anchorLon));
                     cmd.add("--anchor-lat");
                     cmd.add(String.valueOf(anchorLat));
+                }
+                if (hasTerrainEdits) {
+                    cmd.add("--terrain-edits");
+                    cmd.add(terrainEditsFile.getAbsolutePath());
                 }
 
                 ProcessResult pr = runProcess(cmd, new File(projectRoot), proTimeoutSeconds, "[pro] ", StandardCharsets.UTF_8);
