@@ -157,11 +157,14 @@ public class AdminUserController {
         System.out.println("接收数据成功！");
         ArrayList<String> nums_n = new ArrayList<>();
 
-        //批量执行多时间段（3、6、12、24h等）
+        // 批量执行多时间段（3、6、12、24h等）
+        // pid -> 该进程对应的预测时段：结果图名称必须与本进程的时段一致，避免多时段并行时全部标成同一时段
+        Map<String, String> pidTimeMap = new LinkedHashMap<>();
         for(int i=0;i<time.size();i++){
             int nums=time.size();
             String x = TRIGRS(projectRoot, time.get(i),rsl,depth,diffus,ksat,zmax,color,nums);
             nums_n.add(x);
+            pidTimeMap.put(x, time.get(i));
         }
         Set<String> processedPids = new HashSet<>();
         Set<String> p_name = new HashSet<>();
@@ -172,7 +175,7 @@ public class AdminUserController {
             boolean allPidsFinished = false;
             while (!allPidsFinished) {
                 allPidsFinished = true;
-                if (checkAndExecute(projectRoot, nums_n, color, time.get(i), processedPids, p_name)) {
+                if (checkAndExecute(projectRoot, nums_n, color, pidTimeMap, processedPids, p_name)) {
                     break;
                 }
                 for (String pid : nums_n) {
@@ -203,6 +206,23 @@ public class AdminUserController {
         if (list.isEmpty()) {
             System.out.println("[风险源模型] 未生成任何结果图，请查看上方异常堆栈");
             return "ERROR:结果图生成失败，请查看后端日志";
+        }
+        // 按用户勾选的时段顺序输出结果图，前端依次取图时不会错位
+        if (time != null && !time.isEmpty()) {
+            List<String> ordered = new ArrayList<>();
+            for (String t : time) {
+                String suffix = "_" + safeName(t) + ".png";
+                for (Iterator<String> it = list.iterator(); it.hasNext(); ) {
+                    String imgName = it.next();
+                    if (imgName.endsWith(suffix)) {
+                        ordered.add(imgName);
+                        it.remove();
+                        break;
+                    }
+                }
+            }
+            ordered.addAll(list); // 名称中不含时段（灰度/红绿蓝等色带）时保持原有顺序
+            list = ordered;
         }
 //        System.out.println(list.get(0));
         // 构建返回结果（保持前端正则解析兼容：左下经度/纬度 + 图片名称N）
@@ -241,20 +261,26 @@ public class AdminUserController {
     }
 
     // 检查 PID 并在少一个时执行代码
-    public static boolean checkAndExecute(String projectRoot, List<String> pids, String color, String time, Set<String> processedPids,Set<String> p_name) throws Exception {
+    public static boolean checkAndExecute(String projectRoot, List<String> pids, String color, Map<String, String> pidTimeMap, Set<String> processedPids, Set<String> p_name) throws Exception {
         boolean anyPidStopped = false;
         for (String pid : pids) {
-            if (!isPidRunning(pid)&& !processedPids.contains(pid)) {
+            if (!isPidRunning(pid) && !processedPids.contains(pid)) {
                 // 如果有 PID 不在运行，则执行代码
                 processedPids.add(pid); // 标记该 PID 已处理
-                String z=GrayscaleImageGenerator(projectRoot, color, time);
+                // 用该进程自己的时段命名结果图，多时段并行时不会互相串名
+                String slotTime = pidTimeMap.get(pid);
+                String z = null;
+                try {
+                    z = GrayscaleImageGenerator(projectRoot, color, slotTime);
+                } catch (Exception e) {
+                    System.out.println("[风险源模型] 结果图生成异常（时段 " + slotTime + "）: " + e);
+                    e.printStackTrace();
+                }
                 if (z == null || z.trim().isEmpty()) {
-                    System.out.println("[风险源模型] 结果图生成失败（时段 " + time + "），详见上方异常堆栈");
+                    System.out.println("[风险源模型] 结果图生成失败（时段 " + slotTime + "），详见上方异常堆栈");
                 } else {
                     p_name.add(z);
                 }
-//                return true; // 执行过操作
-
                 anyPidStopped = true; // 标记至少有一个 PID 已停止
             }
         }
@@ -522,6 +548,11 @@ public class AdminUserController {
         }
     }
 
+    // 文件名与图名匹配统一使用的安全时段标记
+    private static String safeName(String time) {
+        return (time == null) ? "" : time.trim().replaceAll("[^0-9A-Za-z._-]", "");
+    }
+
     //风险txt文件转为png
     public static String GrayscaleImageGenerator(String projectRoot,String color,String time) throws Exception {
         System.out.println("开始生成图-----");
@@ -532,11 +563,34 @@ public class AdminUserController {
             outDir.mkdirs();
         }
         // 文件名中的时段标记只保留安全字符，避免非法文件名
-        String safeTime = (time == null) ? "" : time.trim().replaceAll("[^0-9A-Za-z._-]", "");
+        String safeTime = safeName(time);
         // 自动创建唯一的临时文件，前缀为 "temp_"，后缀为 ".txt"
         Path inputFile = Files.createTempFile("temp_", ".txt");
-        // 拷贝原文件到临时文件
-        Files.copy(Paths.get(File), inputFile, StandardCopyOption.REPLACE_EXISTING);
+        // 拷贝原文件到临时文件：TRIGRS 正在写结果时文件可能被短暂占用，重试几次再放弃
+        IOException copyError = null;
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            try {
+                Files.copy(Paths.get(File), inputFile, StandardCopyOption.REPLACE_EXISTING);
+                copyError = null;
+                break;
+            } catch (IOException e) {
+                copyError = e;
+                try {
+                    Thread.sleep(500L * attempt);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        if (copyError != null) {
+            try {
+                Files.deleteIfExists(inputFile);
+            } catch (IOException ignored) {
+            }
+            System.out.println("[风险源模型] 结果文件读取失败: " + copyError);
+            return null;
+        }
         int width = 0; // 图像宽度
         int height = 0; // 图像高度
         int cellSize = 0; // 每个像元格的大小
