@@ -379,45 +379,32 @@ public class AdminUserController {
 
         CompletableFuture<Void> processFuture = CompletableFuture.runAsync(() -> {
             try {
-                ProcessBuilder builder = new ProcessBuilder("cmd", "/c", "start", "", "/D", new java.io.File(projectRoot).getAbsolutePath(), new java.io.File(projectRoot, "TRIGRS.exe").getAbsolutePath());//cmd启动新线程执行TRIGRS
+                // 直接启动 TRIGRS.exe（旧写法 "cmd /c start ..." 会额外弹出一个独立的控制台窗口）
+                ProcessBuilder builder = new ProcessBuilder(new java.io.File(projectRoot, "TRIGRS.exe").getAbsolutePath());
                 builder.directory(new java.io.File(projectRoot));
-                 builder.start();//启动cmd，进而启动TRIGRS.exe
-                ProcessBuilder builder1 = new ProcessBuilder("cmd", "/c","tasklist", "/FI", "IMAGENAME eq TRIGRS.exe");
-//                ProcessBuilder builder1 = new ProcessBuilder("cmd", "/c","tasklist");
-
-                // 获取 tasklist 命令的输出流
-                Process process =  builder1.start();
-                process.waitFor();
-                BufferedReader reader1 = new BufferedReader(new InputStreamReader(process.getInputStream(), Charset.forName("GBK")));
-//                String line1;
-                // 用于存储所有行的列表
-                List<String> lines = new ArrayList<>();
-                String line1;
-//                int index =0;  // 用于追踪当前存储到 pid 数组的位置
-
-                while ((line1 = reader1.readLine()) != null) {
-                    lines.add(line1);
-//                    System.out.println(line1);
+                // 合并 stdout/stderr，子进程输出交给下面的线程转发到后端控制台
+                builder.redirectErrorStream(true);
+                Process trigrsProcess = builder.start();
+                // 子进程不需要标准输入，立即关闭，避免个别情况下等待输入卡死
+                try {
+                    trigrsProcess.getOutputStream().close();
+                } catch (IOException ignored) {
                 }
-                // 检查是否有内容，并匹配倒数第一行
-                if (!lines.isEmpty()) {
-                    // 获取倒数第一行
-                    String lastLine = lines.get(lines.size() - 1);
-                    // 使用正则表达式匹配 PID（假设 PID 是每行的第二个字段）
-                    // 定义正则表达式匹配规则
-                    Pattern pattern = Pattern.compile("\\s+(\\d+)\\s+Console"); // 匹配示例正则
-                    Matcher matcher = pattern.matcher(lastLine);
-                    if (matcher.find()) {
-
-                        String matchedValue = matcher.group(1); // 获取匹配的第一个捕获组
-                        result1[0] = matchedValue;
-//                        System.out.println("匹配结果: " + matchedValue);
-                    }else {
-                        System.out.println("倒数第一行未匹配到内容！");
+                // 直接使用真实 PID：TRIGRS.exe 由本进程启动，无需再解析 tasklist（避免误匹配上次残留的同名进程）
+                result1[0] = String.valueOf(trigrsProcess.pid());
+                System.out.println("[风险源模型] TRIGRS.exe 已启动，PID=" + result1[0] + "，运行日志将打印在本终端");
+                Thread logPump = new Thread(() -> {
+                    try (BufferedReader br = new BufferedReader(new InputStreamReader(trigrsProcess.getInputStream(), Charset.forName("GBK")))) {
+                        String outLine;
+                        while ((outLine = br.readLine()) != null) {
+                            System.out.println("[风险源模型] " + outLine);
+                        }
+                    } catch (Exception ex) {
+                        System.out.println("[风险源模型] 输出读取结束: " + ex.getMessage());
                     }
-                }else{
-                    System.out.println("没有内容可读取！");
-                }
+                }, "trigrs-console");
+                logPump.setDaemon(true);
+                logPump.start();
 //                new Thread(() -> {
 //                    try {
 //                        // 模拟等待 TRIGRS.exe 完成执行
