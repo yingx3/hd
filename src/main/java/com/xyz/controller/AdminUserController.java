@@ -166,37 +166,44 @@ public class AdminUserController {
         Set<String> processedPids = new HashSet<>();
         Set<String> p_name = new HashSet<>();
         //检测exe执行完毕后生成相应的小时图
+        // 等待各时段的 TRIGRS 进程结束，并为已结束的进程生成对应结果图
+        long waitDeadline = System.currentTimeMillis() + Math.max(60000L, processTimeoutSeconds * 1000L);
         for (int i = 0; i < time.size(); i++) {
-            // 每次执行时开始检查所有进程是否完成
             boolean allPidsFinished = false;
-            // 循环检查进程状态，直到所有进程都完成
             while (!allPidsFinished) {
-                // 检查是否有 PID 未在运行
                 allPidsFinished = true;
-
-            if (checkAndExecute(projectRoot, nums_n, color, time.get(i),processedPids,p_name)) {
-                break;
-            }
-            // 检查是否还有 PID 在运行
-            for (String pid : nums_n) {
-                if (isPidRunning(pid)) {
-                    allPidsFinished = false; // 如果有任何 PID 在运行，则标记为未完成
+                if (checkAndExecute(projectRoot, nums_n, color, time.get(i), processedPids, p_name)) {
                     break;
                 }
-            }
-                // 等待 1 秒后再检查一次
-                if (!allPidsFinished)
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+                for (String pid : nums_n) {
+                    if (isPidRunning(pid)) {
+                        allPidsFinished = false;
+                        break;
+                    }
                 }
-        }  System.out.println("completed for time: " + time.get(i));
+                // 保护：进程长时间未结束（或 PID 判定异常）时不再无限等待，避免前端一直拿不到结果
+                if (System.currentTimeMillis() > waitDeadline) {
+                    System.out.println("[风险源模型] 等待 TRIGRS 结束超时（" + processTimeoutSeconds + "s），停止等待");
+                    break;
+                }
+                if (!allPidsFinished) {
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+            System.out.println("completed for time: " + time.get(i));
         }
 
         System.out.println("模型执行完毕");
         // 将 Set 转换为 List
         List<String> list = new ArrayList<>(p_name);
+        if (list.isEmpty()) {
+            System.out.println("[风险源模型] 未生成任何结果图，请查看上方异常堆栈");
+            return "ERROR:结果图生成失败，请查看后端日志";
+        }
 //        System.out.println(list.get(0));
         // 构建返回结果（保持前端正则解析兼容：左下经度/纬度 + 图片名称N）
         StringBuilder resp = new StringBuilder();
@@ -241,7 +248,11 @@ public class AdminUserController {
                 // 如果有 PID 不在运行，则执行代码
                 processedPids.add(pid); // 标记该 PID 已处理
                 String z=GrayscaleImageGenerator(projectRoot, color, time);
-                p_name.add(z);
+                if (z == null || z.trim().isEmpty()) {
+                    System.out.println("[风险源模型] 结果图生成失败（时段 " + time + "），详见上方异常堆栈");
+                } else {
+                    p_name.add(z);
+                }
 //                return true; // 执行过操作
 
                 anyPidStopped = true; // 标记至少有一个 PID 已停止
@@ -515,6 +526,13 @@ public class AdminUserController {
     public static String GrayscaleImageGenerator(String projectRoot,String color,String time) throws Exception {
         System.out.println("开始生成图-----");
         String File = new java.io.File(projectRoot, "data/result/TRfs_min_tutorial_1.txt").getAbsolutePath(); // 输入文件路径
+        // 输出目录不存在时先创建，避免 ImageIO 写文件失败导致前端拿不到结果
+        java.io.File outDir = new java.io.File(staticDir);
+        if (!outDir.exists()) {
+            outDir.mkdirs();
+        }
+        // 文件名中的时段标记只保留安全字符，避免非法文件名
+        String safeTime = (time == null) ? "" : time.trim().replaceAll("[^0-9A-Za-z._-]", "");
         // 自动创建唯一的临时文件，前缀为 "temp_"，后缀为 ".txt"
         Path inputFile = Files.createTempFile("temp_", ".txt");
         // 拷贝原文件到临时文件
@@ -596,19 +614,23 @@ public class AdminUserController {
                 uniqueFileName= "rgb_" + timestamp + ".png";
             }
             else if(color.equals("dangerLevel")){
-                uniqueFileName= "dangerLevel_" + timestamp +"_"+time+ ".png";
+                uniqueFileName= "dangerLevel_" + timestamp + "_" + safeTime + ".png";
             }else{
                 uniqueFileName= "redGradient_" + timestamp + ".png";
             }
             ImageIO.write(image, "png", new java.io.File(staticDir, uniqueFileName));
-            // 删除临时文件
-            Files.deleteIfExists(inputFile);
 //            System.out.println("临时文件已销毁。");
             System.out.println("图像生成为:"+uniqueFileName);
             z=destPts;
             q=uniqueFileName;
         } catch (IOException e) {
+            System.out.println("[风险源模型] 结果图生成失败: " + e);
             e.printStackTrace();
+        } finally {
+            try {
+                Files.deleteIfExists(inputFile);
+            } catch (IOException ignored) {
+            }
         }
 //        return new String[] {
 //                String.valueOf(z[0]),
