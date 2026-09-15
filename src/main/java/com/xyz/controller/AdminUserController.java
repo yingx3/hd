@@ -1486,6 +1486,12 @@ public class AdminUserController {
         final double rouf = numOf(params, "rouf", 1000.0);
         final double interval = Math.max(1e-6, numOf(params, "interval", 10.0));
         final double tmax = Math.max(1e-6, numOf(params, "tmax", 100.0));
+
+        // 长时段模拟（如 Tmax=1000s）墙钟可达 1 小时以上，固定超时会在中途杀掉进程
+        // （前端表现为「pro 模型执行失败, 退出码: 1」）。这里按「约 9 秒墙钟 / 1 秒模拟」
+        // 放大进程超时，最少沿用配置值，最多 6 小时。
+        final long jobTimeoutSeconds = Math.max(proTimeoutSeconds,
+                Math.min(21600L, (long) Math.ceil(tmax * 9.0) + 300L));
         final int maxFrames = (int) Math.max(1, Math.min(300, numOf(params, "maxFrames", proDefaultMaxFrames)));
         String field = str(params, "field");
         if (!Arrays.asList("total", "water", "solid", "speed").contains(field)) {
@@ -1572,7 +1578,7 @@ public class AdminUserController {
                     cmd.add(terrainEditsFile.getAbsolutePath());
                 }
 
-                ProcessResult pr = runProcess(cmd, new File(projectRoot), proTimeoutSeconds, "[pro] ", StandardCharsets.UTF_8);
+                ProcessResult pr = runProcess(cmd, new File(projectRoot), jobTimeoutSeconds, "[pro] ", StandardCharsets.UTF_8);
                 String resultJson = extractSentinel(pr.output, "PRO_RESULT_JSON=");
                 Map<String, Object> result = resultJson.isEmpty() ? null
                         : OBJECT_MAPPER.readValue(resultJson, new TypeReference<Map<String, Object>>() {
@@ -1583,6 +1589,13 @@ public class AdminUserController {
                     String msg = (result != null && result.get("message") != null)
                             ? String.valueOf(result.get("message"))
                             : ("pro \u6a21\u578b\u6267\u884c\u5931\u8d25, \u9000\u51fa\u7801: " + pr.exitCode);
+                    if (pr.output != null && pr.output.contains("[timeout]")) {
+                        // 区分「超时被杀」与「算法自身报错」，给出可操作提示
+                        msg = "\u8ba1\u7b97\u8d85\u65f6\uff1a\u6a21\u62df " + (long) tmax
+                                + "s \u8d85\u8fc7\u540e\u7aef\u7b49\u5f85\u4e0a\u9650\uff08" + jobTimeoutSeconds
+                                + "s\uff09\u5df2\u88ab\u7ec8\u6b62\uff0c\u8bf7\u8c03\u5c0f\u300c\u8ba1\u7b97\u65f6\u95f4\u300d"
+                                + "\u6216\u589e\u5927 app.pro.timeout";
+                    }
                     job.put("message", msg);
                     job.put("log", tail(pr.output, 2000));
                     return;
@@ -2097,7 +2110,13 @@ public class AdminUserController {
             process.waitFor();
         }
         reader.join(2000);
-        return new ProcessResult(process.exitValue(), out.toString());
+        String output = out.toString();
+        if (!finished) {
+            // 在输出里留标记，便于上层把「超时被杀」与「算法自身报错」区分开
+            output = "[timeout] \u8fdb\u7a0b\u8fd0\u884c\u8d85\u8fc7 " + timeoutSeconds
+                    + " \u79d2\uff0c\u5df2\u88ab\u5f3a\u5236\u7ec8\u6b62" + System.lineSeparator() + output;
+        }
+        return new ProcessResult(process.exitValue(), output);
     }
 
     private static String extractSentinel(String output, String prefix) {
