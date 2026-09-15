@@ -1488,10 +1488,11 @@ public class AdminUserController {
         final double tmax = Math.max(1e-6, numOf(params, "tmax", 100.0));
 
         // 长时段模拟（如 Tmax=1000s）墙钟可达 1 小时以上，固定超时会在中途杀掉进程
-        // （前端表现为「pro 模型执行失败, 退出码: 1」）。这里按「约 9 秒墙钟 / 1 秒模拟」
-        // 放大进程超时，最少沿用配置值，最多 6 小时。
+        // （前端表现为「pro 模型执行失败, 退出码: 1」）。实测节拍随水流
+        // 扩展而逐渐变慢（帧间隔从约 40s 增至约 350s），故按 Tmax 线性放大 12 倍并留
+        // 300s 余量；最少沿用配置值，最多 6 小时。
         final long jobTimeoutSeconds = Math.max(proTimeoutSeconds,
-                Math.min(21600L, (long) Math.ceil(tmax * 9.0) + 300L));
+                Math.min(21600L, (long) Math.ceil(tmax * 12.0) + 300L));
         final int maxFrames = (int) Math.max(1, Math.min(300, numOf(params, "maxFrames", proDefaultMaxFrames)));
         String field = str(params, "field");
         if (!Arrays.asList("total", "water", "solid", "speed").contains(field)) {
