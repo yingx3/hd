@@ -1728,6 +1728,103 @@ public class AdminUserController {
         return ResponseEntity.ok(job);
     }
 
+    /**
+     * 历史模拟记录：扫描静态目录 <staticDir>/<proStaticSubdir>/ 下的历史任务目录，
+     * 逐个读取 frames/ 与 frames_meta.json，返回可直接回放的结果列表。
+     */
+    @GetMapping("/pro_history")
+    public ResponseEntity<?> proHistory(@RequestParam(value = "limit", required = false) Integer limit) {
+        int max = (limit == null || limit <= 0) ? 30 : Math.min(200, limit);
+        File root = new File(avaflowStaticDir, proStaticSubdir);
+        List<Map<String, Object>> items = new ArrayList<>();
+        int total = 0;
+        File[] dirs = root.listFiles(File::isDirectory);
+        if (dirs != null) {
+            Arrays.sort(dirs, Comparator.comparing(File::getName).reversed());
+            for (File dir : dirs) {
+                File framesDir = new File(dir, "frames");
+                if (!framesDir.isDirectory()) {
+                    continue;
+                }
+                String jobId = dir.getName();
+                if (!jobId.matches("[A-Za-z0-9_-]{1,96}")) {
+                    continue;
+                }
+                Map<String, Object> pythonMeta = new LinkedHashMap<>();
+                File metaFile = new File(framesDir, "frames_meta.json");
+                if (metaFile.isFile()) {
+                    try {
+                        pythonMeta = OBJECT_MAPPER.readValue(metaFile,
+                                new TypeReference<Map<String, Object>>() {
+                                });
+                    } catch (Exception ignored) {
+                        // 元数据损坏时仍尝试按帧文件名回放
+                    }
+                }
+                String sourceCrs = (pythonMeta.get("sourceCrs") == null)
+                        ? ""
+                        : String.valueOf(pythonMeta.get("sourceCrs")).trim();
+
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("jobId", jobId);
+                long createdEpoch = 0L;
+                String[] idParts = jobId.split("_");
+                if (idParts.length >= 2) {
+                    try {
+                        createdEpoch = Long.parseLong(idParts[1]);
+                    } catch (NumberFormatException ignored) {
+                        createdEpoch = 0L;
+                    }
+                }
+                if (createdEpoch <= 0L) {
+                    createdEpoch = dir.lastModified();
+                }
+                item.put("createdAtEpoch", createdEpoch);
+                item.put("createdAtText", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+                        .format(new java.util.Date(createdEpoch)));
+                item.put("field", pythonMeta.get("field"));
+                item.put("tmax", pythonMeta.get("tmax"));
+                item.put("interval", pythonMeta.get("interval"));
+                item.put("globalMax", pythonMeta.get("globalMax"));
+                Double depthScale = null;
+                Object thinning = pythonMeta.get("depthThinning");
+                if (thinning instanceof Map) {
+                    Object scale = ((Map<?, ?>) thinning).get("scale");
+                    if (scale instanceof Number) {
+                        depthScale = ((Number) scale).doubleValue();
+                    }
+                }
+                item.put("depthScale", depthScale);
+                Object edits = pythonMeta.get("terrainEdits");
+                item.put("terrainEdited", (edits instanceof Collection) && !((Collection<?>) edits).isEmpty());
+
+                try {
+                    Map<String, Object> conv = prepareProFrames(framesDir, jobId, jobId, sourceCrs);
+                    int frameCount = ((Number) conv.get("frameCount")).intValue();
+                    if (frameCount <= 0) {
+                        continue;
+                    }
+                    item.put("frameCount", frameCount);
+                    item.put("bbox", conv.get("bbox"));
+                    item.put("meta", conv.get("meta"));
+                    item.put("result", conv);
+                } catch (Exception e) {
+                    System.err.println("Pro 历史记录读取失败 " + jobId + ": " + e.getMessage());
+                    continue;
+                }
+                total++;
+                if (items.size() < max) {
+                    items.add(item);
+                }
+            }
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("status", "ok");
+        resp.put("total", total);
+        resp.put("items", items);
+        return ResponseEntity.ok(resp);
+    }
+
     /** 汇总 Pro 输出帧的网格元数据（供前端 DebrisFlow 渲染与相机定位）。 */
     private Map<String, Object> prepareProFrames(File framesDir, String prefix, String jobId, String sourceCrs)
             throws Exception {
