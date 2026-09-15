@@ -19,6 +19,9 @@
   python run_pro.py --job-dir <jobDir> --static-dir <nginxHtml> \
       --out-base /ng/pro/<jobId> --bed 0.2 --nn 0.0125 --dx 0 --dy 0 \
       --rous 2700 --rouf 1000 --interval 10 --tmax 100 --max-frames 40 --field total
+
+  # 物源层厚度比例 / 上限（可选）：0.3 = 只保留 30% 的 zB-zL 厚度
+  --depth-scale 0.3 --depth-cap 150
 """
 import argparse
 import importlib.util
@@ -603,6 +606,46 @@ def apply_terrain_edits(arrays, grid, edits):
     return applied
 
 
+def apply_depth_thinning(arrays, scale=1.0, cap=0.0):
+    """按比例 / 上限削薄物源层（泥石流层）厚度。
+
+    物源层厚度 = zB - zL。前端的「物源厚度比例」越小，初始物源越薄，
+    启动后下泄的规模、流速与堆积范围越弱。未做任何削薄时返回 None。
+    """
+    scale = float(scale)
+    cap = float(cap)
+    if not scale >= 0.0:
+        scale = 1.0
+    if abs(scale - 1.0) < 1e-12 and cap <= 0.0:
+        return None
+    zb = np.asarray(arrays["zb"], dtype=np.float64)
+    zl = np.asarray(arrays["zl"], dtype=np.float64)
+    before = np.maximum(zb - zl, 0.0)
+    eff = before * scale
+    if cap > 0.0:
+        eff = np.minimum(eff, cap)
+    arrays["zb"] = zl + eff
+    info = {
+        "scale": scale,
+        "cap": cap if cap > 0.0 else None,
+        "before": {
+            "max": float(np.max(before)) if before.size else 0.0,
+            "mean": float(np.mean(before)) if before.size else 0.0,
+            "volume": float(np.sum(before)),
+        },
+        "after": {
+            "max": float(np.max(eff)) if eff.size else 0.0,
+            "mean": float(np.mean(eff)) if eff.size else 0.0,
+            "volume": float(np.sum(eff)),
+        },
+    }
+    cap_note = ("，上限=%.3gm" % cap) if cap > 0.0 else ""
+    log("物源层削薄：比例=%.4g%s，最大厚度 %.3f -> %.3f m，体积 -> %.4g"
+        % (scale, cap_note, info["before"]["max"], info["after"]["max"],
+           info["after"]["volume"]))
+    return info
+
+
 def resample_by_index(arr, nrows, ncols):
     """无地理参考时的最近邻重采样（仅用于形状不一致的兜底）。"""
     src_r, src_c = arr.shape
@@ -685,6 +728,10 @@ def run_simulation(job_dir, args):
     terrain_edits = load_terrain_edits(getattr(args, "terrain_edits", ""))
     terrain_applied = apply_terrain_edits(arrays, grid, terrain_edits)
 
+    # 物源层厚度比例：把 zB-zL 按前端参数削薄后再算（比例 1.0 时不做任何改动）
+    depth_thinning = apply_depth_thinning(
+        arrays, getattr(args, "depth_scale", 1.0), getattr(args, "depth_cap", 0.0))
+
     # python_port 的 main() 从 basePath 下按 txt 读取输入
     work_dir = os.path.join(job_dir, "work")
     os.makedirs(work_dir, exist_ok=True)
@@ -702,6 +749,18 @@ def run_simulation(job_dir, args):
 
     log("计算网格 %dx%d, dx=%.3fm dy=%.3fm, 时长=%.1fs, 输出间隔=%.3fs, CRS=%s"
         % (grid["ncols"], grid["nrows"], dx, dy, tmax, interval, grid["crsName"]))
+
+    if getattr(args, "prepare_only", False):
+        log("--prepare-only：仅写出 work/ 输入与参数，跳过数值计算")
+        return {
+            "model": "pro", "prepareOnly": True, "frameCount": 0,
+            "ncols": grid["ncols"], "nrows": grid["nrows"],
+            "cellsize": grid["dx"], "dlat": grid["dy"],
+            "xllcorner": grid["xll"], "yllcorner": grid["yll"],
+            "sourceCrs": grid["crsName"], "sourceCrsWkt": grid["crsWkt"],
+            "interval": interval, "tmax": tmax, "params": params,
+            "terrainEdits": terrain_applied, "depthThinning": depth_thinning,
+        }
 
     frames_dir = os.path.join(args.static_dir, args.out_subdir, os.path.basename(job_dir.rstrip("/\\")), "frames")
     if args.frames_dir:
@@ -809,6 +868,7 @@ def run_simulation(job_dir, args):
         "framesDir": frames_dir,
         "outBase": args.out_base,
         "terrainEdits": terrain_applied,
+        "depthThinning": depth_thinning,
     }
     dump_json(os.path.join(frames_dir, "frames_meta.json"), meta)
     log("计算完成，共 %d 帧，最大 %s = %.4f" % (state["written"], args.field, state["global_max"]))
@@ -898,6 +958,12 @@ def parse_args(argv):
     parser.add_argument("--target-crs", default="")
     parser.add_argument("--terrain-edits", default="",
                         help="地形调控 JSON：[[{polygon:[[lon,lat],...], raise:米}], ...]")
+    parser.add_argument("--depth-scale", type=float, default=1.0,
+                        help="物源层厚度比例：0.3=只保留 30% 的 zB-zL 厚度，默认 1.0 不削薄")
+    parser.add_argument("--depth-cap", type=float, default=0.0,
+                        help="物源层厚度上限（米），<=0 表示不限")
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="只写出 work/ 输入与参数（自检用），不跑数值内核")
     return parser.parse_args(argv)
 
 
@@ -921,7 +987,7 @@ def main(argv=None):
             print("PROBE_JSON=" + json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False))
             return 1
 
-    if not args.static_dir:
+    if not args.static_dir and not args.prepare_only:
         print("PRO_RESULT_JSON=" + json.dumps({"status": "error", "message": "缺少 --static-dir"}, ensure_ascii=False))
         return 1
 

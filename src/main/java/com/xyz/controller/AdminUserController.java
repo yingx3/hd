@@ -1517,6 +1517,10 @@ public class AdminUserController {
         final double rouf = numOf(params, "rouf", 1000.0);
         final double interval = Math.max(1e-6, numOf(params, "interval", 10.0));
         final double tmax = Math.max(1e-6, numOf(params, "tmax", 100.0));
+        // 物源层厚度比例（0-1）：1.0 = 不削薄；<1 时把 zB-zL 按该比例削薄后再算
+        final double depthScale = Math.min(1.0, Math.max(0.0, numOf(params, "depthScale", 1.0)));
+        // 物源层厚度上限（米）：<=0 表示不限
+        final double depthCap = Math.max(0.0, numOf(params, "depthCap", 0.0));
 
         // 长时段模拟（如 Tmax=1000s）墙钟可达 1 小时以上，固定超时会在中途杀掉进程
         // （前端表现为「pro 模型执行失败, 退出码: 1」）。实测节拍随水流
@@ -1593,6 +1597,8 @@ public class AdminUserController {
                         "--rouf", String.valueOf(rouf),
                         "--interval", String.valueOf(interval),
                         "--tmax", String.valueOf(tmax),
+                        "--depth-scale", String.valueOf(depthScale),
+                        "--depth-cap", String.valueOf(depthCap),
                         "--max-frames", String.valueOf(maxFrames),
                         "--field", fieldArg));
                 if (!targetCrs.isEmpty()) {
