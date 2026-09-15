@@ -740,64 +740,95 @@ public class AdminUserController {
                 return new Color(grayValue, grayValue, grayValue, 255);
         }
     }
+    /**
+     * 冰川泥石流易发性预测模型：调用 Python 推理脚本，返回 GeoJSON。
+     * <p>
+     * 说明：推理脚本的输出 shapefile 路径固定（waternet_results1.shp，先删后写），
+     * 因此这里必须串行执行，避免多个请求同时读写同一份输出文件。
+     */
+    private static final Object GBM_INFERENCE_LOCK = new Object();
+
     @PostMapping("/GBM")
     public ResponseEntity<?> runInference(@RequestBody Map<String, Object> body) {
         try {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> files = (List<Map<String, Object>>) body.get("files");
-            Map<String, Object> form = (Map<String, Object>) body.get("form");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> form = body.get("form") instanceof Map
+                    ? (Map<String, Object>) body.get("form")
+                    : new HashMap<>();
             String jsonStr = OBJECT_MAPPER.writeValueAsString(form);
 
             if (files == null || files.isEmpty()) {
                 return ResponseEntity.badRequest().body("Missing 'files'");
             }
 
-            String firstPath = (String) files.get(0).get("savedPath");
-            if (firstPath == null) {
+            // shp / dbf / shx / prj 一起上传时，以 .shp 作为入口；同名附属文件由脚本按同名规则读取
+            Map<String, Object> shpEntry = null;
+            for (Map<String, Object> f : files) {
+                Object p = f == null ? null : f.get("savedPath");
+                if (p != null && p.toString().toLowerCase().endsWith(".shp")) {
+                    shpEntry = f;
+                    break;
+                }
+            }
+            if (shpEntry == null) {
+                shpEntry = files.get(0);
+            }
+
+            String firstPath = shpEntry == null ? null : (String) shpEntry.get("savedPath");
+            if (firstPath == null || firstPath.trim().isEmpty()) {
                 return ResponseEntity.badRequest().body("Invalid file path");
             }
             File firstFile = new File(firstPath);
             String folder = firstFile.getParent();
             String shpfile = firstFile.getName();
 
-            ProcessResult pr = runProcess(
-                    Arrays.asList(pythonExe, inferenceScript, shpfile, jsonStr),
-                    null, processTimeoutSeconds, "[Python] ", StandardCharsets.UTF_8);
-            if (pr.exitCode != 0) {
-                return ResponseEntity.internalServerError().body("Python script failed");
-            }
-            String outputShpPath = extractSentinel(pr.output, "OUTPUT_PATH=");
-            if (outputShpPath.isEmpty()) {
-                return ResponseEntity.internalServerError().body("No output shapefile path from Python");
-            }
+            synchronized (GBM_INFERENCE_LOCK) {
+                ProcessResult pr = runProcess(
+                        Arrays.asList(pythonExe, inferenceScript, shpfile, jsonStr),
+                        null, processTimeoutSeconds, "[Python] ", StandardCharsets.UTF_8);
 
-            //  Shapefile to GeoJSON
-            System.setProperty("org.geotools.shapefile.charset", "GBK");
-            File shpFile = new File(outputShpPath);
-            ShapefileDataStore store = new ShapefileDataStore(shpFile.toURI().toURL());
-            store.setCharset(Charset.forName("GBK"));
-            SimpleFeatureSource featureSource = store.getFeatureSource();
-            SimpleFeatureCollection collection = featureSource.getFeatures();
+                String outputShpPath = extractSentinel(pr.output, "OUTPUT_PATH=");
+                // 推理脚本内部异常时仍可能以 0 退出，因此以「是否拿到输出路径」为准
+                if (pr.exitCode != 0 || outputShpPath.isEmpty()) {
+                    return ResponseEntity.internalServerError()
+                            .body("推理失败：" + tailOf(pr.output, 800));
+                }
 
-            CoordinateReferenceSystem sourceCRS = featureSource.getSchema().getCoordinateReferenceSystem();
-            if (sourceCRS == null) {
-                sourceCRS = CRS.decode("EPSG:32646", true);
+                File shpFile = new File(outputShpPath);
+                if (!shpFile.exists()) {
+                    return ResponseEntity.internalServerError()
+                            .body("推理输出文件不存在：" + outputShpPath);
+                }
+
+                //  Shapefile to GeoJSON
+                System.setProperty("org.geotools.shapefile.charset", "GBK");
+                ShapefileDataStore store = new ShapefileDataStore(shpFile.toURI().toURL());
+                store.setCharset(Charset.forName("GBK"));
+                SimpleFeatureSource featureSource = store.getFeatureSource();
+                SimpleFeatureCollection collection = featureSource.getFeatures();
+
+                CoordinateReferenceSystem sourceCRS = featureSource.getSchema().getCoordinateReferenceSystem();
+                if (sourceCRS == null) {
+                    sourceCRS = CRS.decode("EPSG:32646", true);
+                }
+                CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
+                if (!CRS.equalsIgnoreMetadata(sourceCRS, targetCRS)) {
+                    collection = new ReprojectingFeatureCollection(collection, targetCRS);
+                }
+
+                FeatureJSON fjson = new FeatureJSON();
+                ByteArrayOutputStream os = new ByteArrayOutputStream();
+                fjson.writeFeatureCollection(collection, os);
+                String geojson = os.toString();
+
+                Map<String, Object> resp = new HashMap<>();
+                resp.put("status", "ok");
+                resp.put("geojson", geojson);
+                resp.put("folder", folder);
+                return ResponseEntity.ok(resp);
             }
-            CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
-            if (!CRS.equalsIgnoreMetadata(sourceCRS, targetCRS)) {
-                collection = new ReprojectingFeatureCollection(collection, targetCRS);
-            }
-
-            FeatureJSON fjson = new FeatureJSON();
-            ByteArrayOutputStream os = new ByteArrayOutputStream();
-            fjson.writeFeatureCollection(collection, os);
-            String geojson = os.toString();
-
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("status", "ok");
-            resp.put("geojson", geojson);
-            resp.put("folder", folder);
-            return ResponseEntity.ok(resp);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -2118,6 +2149,18 @@ public class AdminUserController {
                     + " \u79d2\uff0c\u5df2\u88ab\u5f3a\u5236\u7ec8\u6b62" + System.lineSeparator() + output;
         }
         return new ProcessResult(process.exitValue(), output);
+    }
+
+    /** 截取外部进程输出的尾部，便于把算法真实报错带回前端 */
+    private static String tailOf(String text, int maxChars) {
+        if (text == null) {
+            return "";
+        }
+        String trimmed = text.trim();
+        if (trimmed.length() <= maxChars) {
+            return trimmed;
+        }
+        return "..." + trimmed.substring(trimmed.length() - maxChars);
     }
 
     private static String extractSentinel(String output, String prefix) {
