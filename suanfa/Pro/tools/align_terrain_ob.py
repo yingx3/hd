@@ -338,6 +338,8 @@ def main(argv=None):
     p.add_argument("--ob-cellsize", type=float, help="Terrain_Ob 的像元大小(米)")
     p.add_argument("--ob-xll", type=float, help="Terrain_Ob 左下角 x（投影坐标）")
     p.add_argument("--ob-yll", type=float, help="Terrain_Ob 左下角 y（投影坐标）")
+    p.add_argument("--ob-transpose", action="store_true",
+                   help="Terrain_Ob 是转置存储的（行=东向、列=南向）；yg 系列导出即为此格式")
     p.add_argument("--ob-flip-y", action="store_true", help="Terrain_Ob 第 0 行是最南（需要翻转）")
     p.add_argument("--assume-same-extent", action="store_true",
                    help="假定 Terrain_Ob 与 zB 覆盖同一范围（无地理参考时使用）")
@@ -403,12 +405,16 @@ def main(argv=None):
     else:
         ob_path = os.path.join(args.src_dir, args.ob_file)
         ob, _ = read_ascii(ob_path)
+        if args.ob_transpose:
+            ob = ob.T
+            log("[对齐] Terrain_Ob 已按转置解读（行=东向，列=南向）")
         if args.ob_xll is not None and args.ob_yll is not None and args.ob_cellsize:
             src_grid = {"xll": args.ob_xll, "yll": args.ob_yll, "cellsize": args.ob_cellsize,
                         "nrows": ob.shape[0], "ncols": ob.shape[1]}
             aligned = resample_bilinear(ob, src_grid, dst, flip_y=args.ob_flip_y)
-            ctx["source_desc"] = ("按地理参考重采样: xll=%.2f yll=%.2f cell=%s m, 源 %d x %d"
-                                  % (args.ob_xll, args.ob_yll, args.ob_cellsize, ob.shape[1], ob.shape[0]))
+            ctx["source_desc"] = ("按地理参考重采样: xll=%.2f yll=%.2f cell=%s m, 源 %d x %d%s"
+                                  % (args.ob_xll, args.ob_yll, args.ob_cellsize, ob.shape[1], ob.shape[0],
+                                     "（转置）" if args.ob_transpose else ""))
         elif args.assume_same_extent:
             aligned = resize_to(ob, dst_shape(dst), flip_y=args.ob_flip_y)
             ctx["source_desc"] = ("假定与 zB 同范围（等比缩放 %d x %d -> %d x %d，无地理参考）"
