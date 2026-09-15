@@ -36,6 +36,28 @@ python .\suanfa\Pro\tools\build_depth_terrain_inputs.py `
 
 如果输出目录已经存在，需要明确加 `--overwrite`。
 
+## 薄化物源厚度
+
+若原始 Depth 算出的物源层过厚，可通过 `--depth-scale` 等比例缩放：
+
+```powershell
+python .\suanfa\Pro\tools\build_depth_terrain_inputs.py `
+  --yg-file "E:\Projects\ZHLXT\算法\Pro\task1_geo\yg2003.txt" `
+  --depth-file "E:\Projects\ZHLXT\算法\Pro\task1_geo\Depth.txt" `
+  --out-dir "E:\Projects\ZHLXT\算法\Pro\task1_geo_depth_inputs\thin_0.3x" `
+  --depth-scale 0.3 `
+  --p-file "E:\Projects\ZHLXT\算法\Pro\task1\p.txt"
+```
+
+`--depth-scale 0.3` 表示物源厚度缩薄到原来的 30%。也可以再用 `--depth-cap` 设置最大厚度上限。
+
+当前已生成两套变体：
+
+| 目录 | 最大物源厚度 | 物源体积约 |
+|---|---:|---:|
+| `task1_geo_depth_inputs\thin_0.3x` | 126.35 m | 3.70×10⁷ m³ |
+| `task1_geo_depth_inputs\thin_0.2x` | 84.23 m | 2.47×10⁷ m³ |
+
 ## 输出文件
 
 | 文件 | 含义 |
@@ -43,7 +65,8 @@ python .\suanfa\Pro\tools\build_depth_terrain_inputs.py `
 | `zB.txt` | 按 Depth 物源厚度构造的灾前/滑体顶面 |
 | `zL.txt` | 对齐后的灾后/滑床地形 |
 | `hW.txt` | 初始水深；未指定 `--hw-file` 时为全 0 |
-| `Depth_geo30m.txt` | 转置并带 ASCII 头的 Depth |
+| `Depth_geo30m.txt` | 转置并带 ASCII 头的原始 Depth |
+| `Depth_effective.txt` | 缩放/限幅后的实际物源厚度 |
 | `base_yg2003_geo30m.txt` | 用于构造的灾后基准地形 |
 | `metadata.json` | 来源哈希、窗口、网格和统计信息 |
 | `p.txt` | 可选复制到输出目录的参数文件 |

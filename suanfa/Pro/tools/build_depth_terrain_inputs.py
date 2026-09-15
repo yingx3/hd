@@ -119,6 +119,18 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Depth 与地理方向的关系；当前 Depth.txt 使用 transpose",
     )
     parser.add_argument(
+        "--depth-scale",
+        type=float,
+        default=1.0,
+        help="Depth 物源厚度缩放系数，例如 0.3 表示缩薄到 30%，默认 1.0",
+    )
+    parser.add_argument(
+        "--depth-cap",
+        type=float,
+        default=None,
+        help="可选：对缩放后的物源厚度设置上限（米）",
+    )
+    parser.add_argument(
         "--hw-file",
         help="可选：与输出同网格的 ASCII 水深文件；未提供时 hW 全为 0",
     )
@@ -159,9 +171,18 @@ def main(argv=None) -> int:
     if base.shape != depth_geo.shape:
         raise ValueError(f"基准地形与 Depth 网格不一致: {base.shape} vs {depth_geo.shape}")
 
+    if args.depth_scale < 0:
+        raise ValueError("--depth-scale 不能为负数")
+    if args.depth_cap is not None and args.depth_cap < 0:
+        raise ValueError("--depth-cap 不能为负数")
+
     out_header = crop_header(yg_header, row0, col0, nrows, ncols)
     zL = base.copy()
-    zB = zL + np.maximum(depth_geo, 0.0)
+    depth_positive = np.maximum(depth_geo, 0.0)
+    depth_effective = depth_positive * float(args.depth_scale)
+    if args.depth_cap is not None:
+        depth_effective = np.minimum(depth_effective, float(args.depth_cap))
+    zB = zL + depth_effective
     hS = zB - zL
 
     if args.hw_file:
@@ -184,6 +205,7 @@ def main(argv=None) -> int:
         "zL.txt": zL,
         "hW.txt": hW,
         "Depth_geo30m.txt": depth_geo,
+        "Depth_effective.txt": depth_effective,
         "base_yg2003_geo30m.txt": base,
     }
 
@@ -202,7 +224,7 @@ def main(argv=None) -> int:
 
     source_info = {
         "generatedAtUtc": datetime.now(timezone.utc).isoformat(),
-        "formula": "zL = base; zB = zL + max(Depth_geo, 0); hS = zB - zL = Depth",
+        "formula": "zL = base; Depth_effective = min(max(Depth_geo, 0) * depthScale, depthCap); zB = zL + Depth_effective; hS = Depth_effective",
         "coordinateNote": "ASCII 头 + EPSG:32646 (UTM 46N)，使用时应显式传 --source-crs EPSG:32646",
         "grid": {
             "ncols": int(out_header["ncols"]),
@@ -221,7 +243,7 @@ def main(argv=None) -> int:
         },
         "inputs": {
             "yg2003": {"path": str(yg_path), "sha256": sha256_file(yg_path)},
-            "depth": {"path": str(depth_path), "sha256": sha256_file(depth_path), "orientation": args.depth_orientation},
+            "depth": {"path": str(depth_path), "sha256": sha256_file(depth_path), "orientation": args.depth_orientation, "scale": float(args.depth_scale), "cap": None if args.depth_cap is None else float(args.depth_cap)},
         },
         "stats": {
             "depth": {
@@ -230,13 +252,19 @@ def main(argv=None) -> int:
                 "mean": float(np.mean(depth_geo)),
                 "nonzeroCells": int(np.count_nonzero(depth_geo)),
             },
+            "depthEffective": {
+                "min": float(np.min(depth_effective)),
+                "max": float(np.max(depth_effective)),
+                "mean": float(np.mean(depth_effective)),
+                "nonzeroCells": int(np.count_nonzero(depth_effective)),
+            },
             "zB": {"min": float(np.min(zB)), "max": float(np.max(zB))},
             "zL": {"min": float(np.min(zL)), "max": float(np.max(zL))},
             "hW": {"min": float(np.min(hW)), "max": float(np.max(hW)), "nonzeroCells": int(np.count_nonzero(hW))},
             "zBMinusZL": {
                 "min": float(np.min(hS)),
                 "max": float(np.max(hS)),
-                "maxAbsDiffFromDepth": float(np.max(np.abs(hS - depth_geo))),
+                "maxAbsDiffFromDepthEffective": float(np.max(np.abs(hS - depth_effective))),
             },
         },
     }
@@ -252,14 +280,17 @@ def main(argv=None) -> int:
 
 ```text
 zL = yg2003 对齐后的灾后/滑床地形
-zB = zL + Depth_geo
+Depth_effective = min(max(Depth_geo, 0) × depthScale, depthCap)
+zB = zL + Depth_effective
 hW = 独立的初始水深场（当前无对齐水深文件，因此为全 0）
 ```
 
 因此：
 
 ```text
-hS = zB - zL = Depth_geo
+hS = zB - zL = Depth_effective
+depthScale = {float(args.depth_scale):g}
+depthCap = {("未设置" if args.depth_cap is None else float(args.depth_cap))}
 ```
 
 ## 网格
@@ -275,7 +306,8 @@ hS = zB - zL = Depth_geo
 - `zB.txt`：数值构造的灾前/滑体顶面
 - `zL.txt`：对齐后的灾后/滑床地形
 - `hW.txt`：初始水深，当前为全 0；如后续有一致网格的真实水深，请替换
-- `Depth_geo30m.txt`：转置并带 ASCII 头的 Depth
+- `Depth_geo30m.txt`：转置并带 ASCII 头的原始 Depth
+- `Depth_effective.txt`：经过 depthScale / depthCap 处理后的实际物源厚度
 - `base_yg2003_geo30m.txt`：用于构造的灾后基准地形
 - `metadata.json`：来源、哈希、窗口和统计信息
 - `p.txt`：仅在使用 `--p-file` 时复制
@@ -294,12 +326,22 @@ hS = zB - zL = Depth_geo
         % (ncols, nrows, float(out_header["cellsize"]), float(out_header["xllcorner"]), float(out_header["yllcorner"]))
     )
     log(
-        "Depth: nonzero=%d, min=%.3f, max=%.3f"
+        "Depth(raw): nonzero=%d, min=%.3f, max=%.3f"
         % (int(np.count_nonzero(depth_geo)), float(np.min(depth_geo)), float(np.max(depth_geo)))
     )
     log(
-        "zB-zL: min=%.6f, max=%.6f, max|diff-Depth|=%.3e"
-        % (float(np.min(hS)), float(np.max(hS)), float(np.max(np.abs(hS - depth_geo))))
+        "Depth(effective): scale=%.4g, cap=%s, nonzero=%d, mean=%.3f, max=%.3f"
+        % (
+            float(args.depth_scale),
+            "none" if args.depth_cap is None else str(float(args.depth_cap)),
+            int(np.count_nonzero(depth_effective)),
+            float(np.mean(depth_effective)),
+            float(np.max(depth_effective)),
+        )
+    )
+    log(
+        "zB-zL: min=%.6f, max=%.6f, max|diff-DepthEff|=%.3e"
+        % (float(np.min(hS)), float(np.max(hS)), float(np.max(np.abs(hS - depth_effective))))
     )
     log("hW: nonzero=%d (无对齐水深文件时为 0)" % int(np.count_nonzero(hW)))
     return 0
