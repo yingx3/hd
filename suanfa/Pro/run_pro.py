@@ -761,6 +761,21 @@ def run_simulation(job_dir, args):
 
     port_main = load_port_modules()
     log("调用 python_port 数值内核 ...")
+    # 数值内核只在「跨越输出间隔」时回调，不会给出 t=0 的状态。
+    # 这里补写一帧初始场，保证动画从「完好物源」开始（0, interval, 2*interval, ...）。
+    _hS0 = np.maximum(np.asarray(arrays["zb"], dtype=np.float64)
+                      - np.asarray(arrays["zl"], dtype=np.float64), 0.0)
+    _hW0 = np.maximum(np.asarray(arrays["hw"], dtype=np.float64), 0.0)
+    if args.field == "water":
+        _init_field = _hW0
+    elif args.field == "speed":
+        _init_field = np.zeros_like(_hS0)
+    elif args.field == "solid":
+        _init_field = _hS0
+    else:
+        _init_field = _hS0 + _hW0
+    write_frame(_init_field)
+    state["bucket"] = 0
     emit_progress(job_dir, stage="simulation", percent=1.0, frame=0,
                   elapsedSeconds=0.0, message="数值计算中")
     port_main.main(work_dir, ".", "zb", "zl", "hW", "p", output_fn=output_fn)
