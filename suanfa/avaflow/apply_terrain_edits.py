@@ -75,7 +75,8 @@ def log(message):
 def load_edits(path):
     """读取前端提交的地形调控指令（手绘封闭多边形 + 加高值）。"""
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        # utf-8-sig：容忍手工用 PowerShell/记事本另存的带 BOM 的 JSON
+        with open(path, "r", encoding="utf-8-sig") as handle:
             data = json.load(handle)
     except Exception as exc:
         raise ValueError("地形调控文件读取失败: %s" % exc)
@@ -146,6 +147,7 @@ def main():
     work = data.astype("float64")
     applied = []
     total_cells = 0
+    skipped_invalid = 0
     for index, edit in enumerate(edits, 1):
         geometry = {
             "type": "Polygon",
@@ -167,12 +169,20 @@ def main():
             log("调控 #%d: 多边形不在栅格范围内，已跳过" % index)
             continue
         raise_m = float(edit["raise"])
+        if not np.isfinite(raise_m) or raise_m <= 0.0:
+            log("调控 #%d: 加高值 %.3f 非正数，已忽略" % (index, raise_m))
+            skipped_invalid += 1
+            continue
         work[mask] += raise_m
-        applied.append({"index": index, "raise": round(raise_m, 3), "cells": cells})
+        # 回传多边形，前端可据此在地图上标注调控范围
+        ring = [[round(float(x), 7), round(float(y), 7)] for (x, y) in edit["polygon"]]
+        applied.append({"index": index, "raise": round(raise_m, 3), "cells": cells, "polygon": ring})
         total_cells += cells
         log("调控 #%d: 加高 %.3f m，影响 %d 个像元" % (index, raise_m, cells))
 
     if not applied:
+        if skipped_invalid:
+            return fail("加高值必须大于 0（当前提交的 %d 个范围加高值非法）" % skipped_invalid)
         return fail("所有调控范围都不在栅格覆盖范围内")
 
     out_dtype = "float32" if source_dtype.kind in ("i", "u") else str(source_dtype)

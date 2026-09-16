@@ -522,7 +522,8 @@ def load_terrain_edits(path):
     if not path:
         return []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        # utf-8-sig：容忍手工用 PowerShell/记事本另存的带 BOM 的 JSON
+        with open(path, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
     except Exception as exc:
         log("地形调控文件读取失败(%s)，按未修改地形计算: %s" % (path, exc))
@@ -594,6 +595,9 @@ def apply_terrain_edits(arrays, grid, edits, masks_out=None):
             log("地形调控 #%d: 多边形不在计算网格范围内，已忽略" % idx)
             continue
         raise_m = float(edit["raise"])
+        if not np.isfinite(raise_m) or raise_m <= 0.0:
+            log("地形调控 #%d: 加高值 %.3f 非正数，已忽略" % (idx, raise_m))
+            continue
         # 抬高底床（zL）形成拦挡坝；zB 同步抬高相同幅度，保留原有物源厚度，
         # 避免多边形内的物源被凭空删除（那样下游变弱只是因为少了物源）。
         with np.errstate(invalid="ignore"):
@@ -750,10 +754,11 @@ def annotate_regulation_effects(applied, masks, hS0, hW0, max_field):
         item = applied[idx]
         if mask.shape != source.shape:
             continue
-        item["sourceHit"] = int(np.count_nonzero((source > 1e-6) & mask))
+        item["sourceHit"] = int(np.count_nonzero(np.isfinite(source) & (source > 1e-6) & mask))
         if peak is None:
             continue
         inside = peak[mask]
+        inside = inside[np.isfinite(inside)]
         item["flowPathCells"] = int(np.count_nonzero(inside > 0.05))
         item["flowPathMax"] = round(float(np.max(inside)) if inside.size else 0.0, 3)
         log("地形调控 #%s 自检：范围内初始物源 %d 格，流深>0.05m 的 %d 格，最大流深 %.3f m"
@@ -772,6 +777,16 @@ def run_simulation(job_dir, args):
         inputs, target_crs_override=args.target_crs, default_crs=args.source_crs,
         anchor_lon=args.anchor_lon, anchor_lat=args.anchor_lat,
         dx_hint=args.dx, dy_hint=args.dy)
+
+    # 输入无效值体检：部分读取路径（无需重投影的 tif、无地理头部的 txt/asc）
+    # 会把 NODATA 保留为 NaN，NaN 会写进输出帧并让 frames_meta.json 出现非法 JSON，
+    # 因此这里给出明确提示（写出与统计处另有防护）。
+    for key in ("zb", "zl", "hw"):
+        arr = np.asarray(arrays[key], dtype=np.float64)
+        bad = int(np.count_nonzero(~np.isfinite(arr)))
+        if bad:
+            log("警告：%s 有 %d 个无效值(NaN/Inf)，输出帧与统计会按 0 处理，请检查输入栅格"
+                % (key, bad))
 
     # 地形调控：把前端手绘范围抬高后再跑动力学计算
     terrain_edits = load_terrain_edits(getattr(args, "terrain_edits", ""))
@@ -837,6 +852,9 @@ def run_simulation(job_dir, args):
 
     def write_frame(matrix):
         state["written"] += 1
+        # 写出前统一清洗 NaN/Inf，避免帧文件出现 "nan"（前端解析会得到 NaN）
+        matrix = np.nan_to_num(np.asarray(matrix, dtype=np.float64),
+                               nan=0.0, posinf=0.0, neginf=0.0)
         # 逐格峰值场：用于调控范围与流路的相交自检
         state["max_field"] = (np.array(matrix, dtype=np.float64)
                               if state["max_field"] is None
@@ -895,9 +913,15 @@ def run_simulation(job_dir, args):
 
     # 保证动画收尾在最终状态
     if state["last_field"] is not None and state["written"] > 0:
+        tail_field = np.nan_to_num(np.asarray(state["last_field"], dtype=np.float64),
+                                   nan=0.0, posinf=0.0, neginf=0.0)
         write_asc(os.path.join(frames_dir, "%s_hflow%04d.asc" % (args.prefix, state["written"])),
-                  state["last_field"], grid)
-        state["global_max"] = max(state["global_max"], float(np.max(state["last_field"])))
+                  tail_field, grid)
+        state["global_max"] = max(state["global_max"], float(np.max(tail_field)))
+        # 收尾帧会覆盖最后一帧，峰值场同样要并入，否则调控自检会少算最后一帧
+        state["max_field"] = (np.array(tail_field, dtype=np.float64)
+                              if state["max_field"] is None
+                              else np.maximum(state["max_field"], tail_field))
 
     if state["written"] == 0:
         raise RuntimeError("算法未产生任何输出帧，请检查输入数据")
