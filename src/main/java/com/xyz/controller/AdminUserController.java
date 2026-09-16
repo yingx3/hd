@@ -119,7 +119,7 @@ public class AdminUserController {
     @Value("${app.process-timeout:600}")
     private long processTimeoutSeconds;
 
-    // ---- 山洪泥石流启动动力学模型（Pro / python_port 数值内核）----
+    // ---- 冰岩崩动力学模型（Pro / python_port 数值内核）----
     @Value("${app.pro.jobs-root:}")
     private String proJobsRoot;
 
@@ -1195,7 +1195,7 @@ public class AdminUserController {
         return ResponseEntity.ok(job);
     }
     // ===================================================================== //
-    // 山洪泥石流启动动力学模型（Pro）：调用 suanfa/Pro/python_port 数值内核
+    // 冰岩崩动力学模型（Pro）：调用 suanfa/Pro/python_port 数值内核
     // ===================================================================== //
 
     /** jobId -> 任务状态，供 /pro_start_status 轮询 */

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""洪水泥石流启动动力学模型（Pro）—— python_port 数值内核包装脚本。
+"""冰岩崩动力学模型（Pro）—— python_port 数值内核包装脚本。
 
 职责：
   1. 读取三幅输入栅格：灾前地形 zb / 灾后地形 zl / 初始水深 hw
@@ -931,7 +931,7 @@ def probe_inputs(job_dir, input_dir="", source_crs="", max_cells=1_000_000,
 # CLI
 # --------------------------------------------------------------------------- #
 def parse_args(argv):
-    parser = argparse.ArgumentParser(description="洪水泥石流启动动力学模型(python_port)")
+    parser = argparse.ArgumentParser(description="冰岩崩动力学模型(python_port)")
     parser.add_argument("--job-dir", required=True)
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--input-dir", default="", help="输入数据目录（默认 <job-dir>/inputs）")
