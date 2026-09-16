@@ -551,12 +551,13 @@ def load_terrain_edits(path):
     return edits
 
 
-def apply_terrain_edits(arrays, grid, edits):
+def apply_terrain_edits(arrays, grid, edits, masks_out=None):
     """把封闭多边形内的地形整体抬高 raise 米（工程措施：拦挡坝 / 固床护底 / 导流堤）。
 
     底床 g.z 取的是 zL，所以抬高 zL 才是「筑起障碍、让流翻过去」；
-    同时用 zB = max(zB, zL) 兜底，保证物源厚度 zB - zL 不出现负值
-    （负厚度会污染求解器，见 solver.Init）。
+    多边形内的 zB 同步抬高同样的幅度，保留原有物源厚度 zB - zL：
+    既不凭空删掉坝址处的物源（否则下游变弱是「少了物源」而不是「被坝挡住」），
+    也保证厚度不会变成负值污染求解器（见 solver.Init）。
     """
     if not edits:
         return []
@@ -593,11 +594,25 @@ def apply_terrain_edits(arrays, grid, edits):
             log("地形调控 #%d: 多边形不在计算网格范围内，已忽略" % idx)
             continue
         raise_m = float(edit["raise"])
+        # 抬高底床（zL）形成拦挡坝；zB 同步抬高相同幅度，保留原有物源厚度，
+        # 避免多边形内的物源被凭空删除（那样下游变弱只是因为少了物源）。
+        with np.errstate(invalid="ignore"):
+            hs_keep = np.where(np.isfinite(zb[mask] - zl[mask]), zb[mask] - zl[mask], 0.0)
+        hs_keep = np.maximum(hs_keep, 0.0)
         zl[mask] = zl[mask] + raise_m
-        zb[mask] = np.maximum(zb[mask], zl[mask])
-        applied.append({"index": idx, "raise": round(raise_m, 3), "cells": n})
-        log("地形调控 #%d: 加高 %.3fm，影响 %d 个网格（%.0fm x %.0fm）"
-            % (idx, raise_m, n, n * grid["dx"], n * grid["dy"]))
+        zb[mask] = zl[mask] + hs_keep
+        source_cells = int(np.count_nonzero(hs_keep > 1e-6))
+        try:
+            ring = [[round(float(x), 7), round(float(y), 7)]
+                    for (x, y) in edit.get("polygon") or []]
+        except (TypeError, ValueError):
+            ring = []
+        applied.append({"index": idx, "raise": round(raise_m, 3), "cells": n,
+                        "sourceCells": source_cells, "polygon": ring})
+        if masks_out is not None:
+            masks_out.append(mask)
+        log("地形调控 #%d: 底床抬高 %.3fm，影响 %d 个网格（%.2f km2，其中 %d 格原有物源同步抬高）"
+            % (idx, raise_m, n, n * grid["dx"] * grid["dy"] / 1e6, source_cells))
 
     if applied:
         hS = np.asarray(zb, dtype=np.float64) - np.asarray(zl, dtype=np.float64)
@@ -713,6 +728,40 @@ def write_asc(path, matrix, grid):
         np.savetxt(f, matrix, fmt="%.3f", delimiter=" ")
 
 
+def annotate_regulation_effects(applied, masks, hS0, hW0, max_field):
+    """给已应用的地形调控补上「有没有和泥石流流路相交」的自检结果。
+
+    范围落在计算网格上并不等于起作用：如果本次泥石流根本没有流经该范围，
+    抬高底床对结果就没有影响。前端据此把「拦挡是否真的生效」讲清楚。
+    """
+    if not applied:
+        return applied
+    src = np.maximum(np.asarray(hS0, dtype=np.float64), 0.0)
+    wat = np.maximum(np.asarray(hW0, dtype=np.float64), 0.0)
+    source = np.maximum(src, wat)
+    peak = None
+    if max_field is not None:
+        peak = np.asarray(max_field, dtype=np.float64)
+        if peak.shape != source.shape:
+            peak = None
+    for idx, mask in enumerate(masks or []):
+        if idx >= len(applied):
+            break
+        item = applied[idx]
+        if mask.shape != source.shape:
+            continue
+        item["sourceHit"] = int(np.count_nonzero((source > 1e-6) & mask))
+        if peak is None:
+            continue
+        inside = peak[mask]
+        item["flowPathCells"] = int(np.count_nonzero(inside > 0.05))
+        item["flowPathMax"] = round(float(np.max(inside)) if inside.size else 0.0, 3)
+        log("地形调控 #%s 自检：范围内初始物源 %d 格，流深>0.05m 的 %d 格，最大流深 %.3f m"
+            % (item.get("index", idx + 1), item["sourceHit"],
+               item["flowPathCells"], item["flowPathMax"]))
+    return applied
+
+
 def run_simulation(job_dir, args):
     """执行算法并把每个输出时刻写成 ASC 帧。"""
     input_dir = os.path.abspath(args.input_dir) if args.input_dir else os.path.join(job_dir, "inputs")
@@ -726,7 +775,8 @@ def run_simulation(job_dir, args):
 
     # 地形调控：把前端手绘范围抬高后再跑动力学计算
     terrain_edits = load_terrain_edits(getattr(args, "terrain_edits", ""))
-    terrain_applied = apply_terrain_edits(arrays, grid, terrain_edits)
+    terrain_masks = []
+    terrain_applied = apply_terrain_edits(arrays, grid, terrain_edits, terrain_masks)
 
     # 物源层厚度比例：把 zB-zL 按前端参数削薄后再算（比例 1.0 时不做任何改动）
     depth_thinning = apply_depth_thinning(
@@ -783,10 +833,14 @@ def run_simulation(job_dir, args):
         % (bucket, interval, tmax / float(max(1, max_frames - 1))))
 
     state = {"calls": 0, "written": 0, "global_max": 0.0, "last_field": None,
-             "bucket": -1, "t0": time.time()}
+             "max_field": None, "bucket": -1, "t0": time.time()}
 
     def write_frame(matrix):
         state["written"] += 1
+        # 逐格峰值场：用于调控范围与流路的相交自检
+        state["max_field"] = (np.array(matrix, dtype=np.float64)
+                              if state["max_field"] is None
+                              else np.maximum(state["max_field"], matrix))
         path = os.path.join(frames_dir, "%s_hflow%04d.asc" % (args.prefix, state["written"]))
         write_asc(path, matrix, grid)
         state["global_max"] = max(state["global_max"], float(np.max(matrix)) if matrix.size else 0.0)
@@ -847,6 +901,10 @@ def run_simulation(job_dir, args):
 
     if state["written"] == 0:
         raise RuntimeError("算法未产生任何输出帧，请检查输入数据")
+
+    # 调控效果自检：范围是否落在物源区 / 泥石流流路上
+    annotate_regulation_effects(terrain_applied, terrain_masks, _hS0, _hW0,
+                               state["max_field"])
 
     meta = {
         "model": "pro",

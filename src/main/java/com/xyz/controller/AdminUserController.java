@@ -1895,8 +1895,11 @@ public class AdminUserController {
                 Map<String, Object> pythonMeta = OBJECT_MAPPER.readValue(metaFile,
                         new TypeReference<Map<String, Object>>() {
                         });
+                // terrainEdits / depthThinning 一并透传给前端：前者用于确认「拦挡范围是否真的生效」，
+                // 后者用于说明本次物源削薄比例。
                 for (String key : Arrays.asList("field", "globalMax", "globalMin", "dx", "dy",
-                        "interval", "tmax", "ncols", "nrows", "cellsize")) {
+                        "interval", "tmax", "ncols", "nrows", "cellsize",
+                        "terrainEdits", "depthThinning")) {
                     if (pythonMeta.get(key) != null) {
                         meta.put(key, pythonMeta.get(key));
                     }
