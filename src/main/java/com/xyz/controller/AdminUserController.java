@@ -1193,6 +1193,9 @@ public class AdminUserController {
                 job.put("bbox", conv.get("bbox"));
                 job.put("meta", conv.get("meta"));
                 job.put("message", "\u5b8c\u6210, \u8f93\u51fa " + frameCount + " \u5e27");
+
+                // 历史模拟：把本次运行的关键信息落盘，历史列表接口可直接读取（不必回读全部帧做统计）
+                writeAvaflowBetaHistoryMeta(jobId, conv, job.get("terrainEdits"), area);
             } catch (Exception e) {
                 job.put("status", "error");
                 job.put("phase", "error");
@@ -1863,6 +1866,255 @@ public class AdminUserController {
         resp.put("total", total);
         resp.put("items", items);
         return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * 冰川泥石流动力学模型（r.avaflow beta）历史模拟记录：扫描
+     * &lt;staticDir&gt;/avaflow_beta/ 下的历史任务目录，返回可直接回放的结果列表。
+     */
+    @GetMapping("/avaflow_beta_history")
+    public ResponseEntity<?> avaflowBetaHistory(@RequestParam(value = "limit", required = false) Integer limit) {
+        int max = (limit == null || limit <= 0) ? 30 : Math.min(200, limit);
+        File root = new File(avaflowStaticDir, "avaflow_beta");
+        List<Map<String, Object>> items = new ArrayList<>();
+        int total = 0;
+        File[] dirs = root.listFiles(File::isDirectory);
+        if (dirs != null) {
+            Arrays.sort(dirs, Comparator.comparing(File::getName).reversed());
+            for (File dir : dirs) {
+                String jobId = dir.getName();
+                if (!jobId.matches("[A-Za-z0-9_-]{1,96}")) {
+                    continue;
+                }
+                File framesDir = new File(dir, "frames");
+                if (!framesDir.isDirectory()) {
+                    continue;
+                }
+                try {
+                    Map<String, Object> item = buildAvaflowBetaHistoryItem(dir, framesDir, jobId);
+                    if (item == null) {
+                        continue;
+                    }
+                    total++;
+                    if (items.size() < max) {
+                        items.add(item);
+                    }
+                } catch (Exception e) {
+                    System.err.println("avaflow_beta 历史记录读取失败 " + jobId + ": " + e.getMessage());
+                }
+            }
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("status", "ok");
+        resp.put("total", total);
+        resp.put("items", items);
+        return ResponseEntity.ok(resp);
+    }
+
+    /** 运行结束时记录历史元数据（history_meta.json），供历史列表快速展示。 */
+    private void writeAvaflowBetaHistoryMeta(String jobId, Map<String, Object> conv,
+            Object terrainEdits, String area) {
+        try {
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("jobId", jobId);
+            meta.put("model", "avaflow_beta");
+            meta.put("createdAtEpoch", System.currentTimeMillis());
+            meta.put("sourceCrs", avaflowSourceCrs);
+            meta.put("frameCount", conv.get("frameCount"));
+            meta.put("area", area);
+            meta.put("terrainEdits", terrainEdits);
+            Object convMeta = conv.get("meta");
+            if (convMeta instanceof Map) {
+                Map<?, ?> m = (Map<?, ?>) convMeta;
+                for (String key : Arrays.asList("ncols", "nrows", "cellsize", "globalMax",
+                        "globalMin", "centerLon", "centerLat", "bbox")) {
+                    meta.put(key, m.get(key));
+                }
+            }
+            File outDir = new File(new File(avaflowStaticDir, "avaflow_beta"), jobId);
+            if (!outDir.isDirectory() && !outDir.mkdirs()) {
+                return;
+            }
+            OBJECT_MAPPER.writeValue(new File(outDir, "history_meta.json"), meta);
+        } catch (Exception e) {
+            System.err.println("avaflow_beta 历史元数据写入失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 汇总一条 avaflow_beta 历史记录：帧清单、网格元数据与可回放的 result。
+     * 首次遇到没有 history_meta.json 的旧任务时扫描全部帧统计极值，并回写缓存。
+     */
+    private Map<String, Object> buildAvaflowBetaHistoryItem(File jobDir, File framesDir, String jobId)
+            throws Exception {
+        String prefix = "beta_" + jobId;
+        File[] files = framesDir.listFiles((d, name) ->
+                name.matches(Pattern.quote(prefix) + "_hflow\\d{4}\\.asc"));
+        if (files == null || files.length == 0) {
+            return null;
+        }
+        Arrays.sort(files, Comparator.comparing(File::getName));
+        int frameCount = files.length;
+
+        Map<String, Object> hist = new LinkedHashMap<>();
+        File histFile = new File(jobDir, "history_meta.json");
+        if (histFile.isFile()) {
+            try {
+                hist = OBJECT_MAPPER.readValue(histFile, new TypeReference<Map<String, Object>>() {
+                });
+            } catch (Exception ignored) {
+                // 缓存损坏时按原始帧重新统计
+            }
+        }
+        String sourceCrs = hist.get("sourceCrs") == null
+                ? avaflowSourceCrs
+                : String.valueOf(hist.get("sourceCrs")).trim();
+        if (sourceCrs.isEmpty()) {
+            sourceCrs = avaflowSourceCrs;
+        }
+
+        AscGridMetadataReader.GridInfo first = AscGridMetadataReader.read(files[0]);
+        boolean cached = (hist.get("frameCount") instanceof Number)
+                && ((Number) hist.get("frameCount")).intValue() == frameCount
+                && (hist.get("globalMax") instanceof Number);
+        double globalMin;
+        double globalMax;
+        if (cached) {
+            globalMin = (hist.get("globalMin") instanceof Number)
+                    ? ((Number) hist.get("globalMin")).doubleValue() : 0.0;
+            globalMax = ((Number) hist.get("globalMax")).doubleValue();
+        } else {
+            double min = Double.POSITIVE_INFINITY;
+            double max = Double.NEGATIVE_INFINITY;
+            boolean hasValue = false;
+            for (File f : files) {
+                try {
+                    AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(f);
+                    if (info.hasValue) {
+                        min = Math.min(min, info.minValue);
+                        max = Math.max(max, info.maxValue);
+                        hasValue = true;
+                    }
+                } catch (Exception e) {
+                    System.err.println("avaflow_beta 帧统计失败 " + f.getName() + ": " + e.getMessage());
+                }
+            }
+            globalMin = hasValue ? min : 0.0;
+            globalMax = hasValue ? max : 0.0;
+        }
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("sourceCrs", sourceCrs);
+        meta.put("field", "solid"); // r.avaflow 输出的 hflow 就是泥石流层厚度
+        meta.put("ncols", first.ncols);
+        meta.put("nrows", first.nrows);
+        meta.put("cellsize", first.cellSize);
+        meta.put("globalMax", globalMax);
+        meta.put("globalMin", globalMin);
+        meta.put("frameCount", frameCount);
+        meta.put("history", true);
+        List<Double> bbox = null;
+        try {
+            double[] center = AscGridMetadataReader.transformCenter(first, sourceCrs);
+            double[] box = AscGridMetadataReader.transformBbox(first, sourceCrs);
+            meta.put("centerLon", center[0]);
+            meta.put("centerLat", center[1]);
+            bbox = Arrays.asList(box[0], box[1], box[2], box[3]);
+            meta.put("bbox", bbox);
+        } catch (Exception e) {
+            meta.put("centerLon", null);
+            meta.put("centerLat", null);
+            meta.put("bbox", null);
+            System.err.println("avaflow_beta 历史坐标转换失败 " + jobId + ": " + e.getMessage());
+        }
+
+        // 地形调控信息：优先取历史元数据，旧任务回落到任务目录里的 terrain_edits.json
+        Object terrainEdits = hist.get("terrainEdits");
+        if (!(terrainEdits instanceof Collection) || ((Collection<?>) terrainEdits).isEmpty()) {
+            File legacyEdits = new File(new File(avaflowJobsRoot, jobId), "terrain_edits.json");
+            try {
+                if (legacyEdits.isFile()) {
+                    terrainEdits = OBJECT_MAPPER.readValue(legacyEdits, Object.class);
+                }
+            } catch (Exception ignored) {
+                // 任务目录不可达（例如 WSL 未启动）时忽略，结果帧仍可回放
+            }
+        }
+        meta.put("terrainEdits", terrainEdits);
+
+        // 旧任务（没有 history_meta.json）第一次读取时把统计结果缓存下来，后续查询更快
+        if (!cached) {
+            Map<String, Object> cache = new LinkedHashMap<>(hist);
+            cache.put("jobId", jobId);
+            cache.put("model", "avaflow_beta");
+            if (!(cache.get("createdAtEpoch") instanceof Number)) {
+                cache.put("createdAtEpoch", createdEpochOf(jobId, jobDir));
+            }
+            cache.put("sourceCrs", sourceCrs);
+            cache.put("frameCount", frameCount);
+            cache.put("globalMin", globalMin);
+            cache.put("globalMax", globalMax);
+            cache.put("ncols", first.ncols);
+            cache.put("nrows", first.nrows);
+            cache.put("cellsize", first.cellSize);
+            cache.put("centerLon", meta.get("centerLon"));
+            cache.put("centerLat", meta.get("centerLat"));
+            cache.put("bbox", bbox);
+            cache.put("terrainEdits", terrainEdits);
+            try {
+                OBJECT_MAPPER.writeValue(histFile, cache);
+            } catch (Exception e) {
+                System.err.println("avaflow_beta 历史缓存写入失败 " + jobId + ": " + e.getMessage());
+            }
+        }
+
+        List<String> frameFiles = new ArrayList<>();
+        for (File f : files) {
+            frameFiles.add(f.getName());
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "ok");
+        result.put("outputBase", "/ng/avaflow_beta/" + jobId);
+        result.put("ascBase", "/ng/avaflow_beta/" + jobId + "/frames");
+        result.put("frameFiles", frameFiles);
+        result.put("frameCount", frameCount);
+        result.put("bbox", bbox);
+        result.put("meta", meta);
+
+        long createdEpoch = createdEpochOf(jobId, jobDir);
+        if (hist.get("createdAtEpoch") instanceof Number) {
+            createdEpoch = ((Number) hist.get("createdAtEpoch")).longValue();
+        }
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("jobId", jobId);
+        item.put("createdAtEpoch", createdEpoch);
+        item.put("createdAtText", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+                .format(new java.util.Date(createdEpoch)));
+        item.put("frameCount", frameCount);
+        item.put("globalMax", globalMax);
+        item.put("area", hist.get("area"));
+        item.put("terrainEdited", (terrainEdits instanceof Collection)
+                && !((Collection<?>) terrainEdits).isEmpty());
+        item.put("bbox", bbox);
+        item.put("meta", meta);
+        item.put("result", result);
+        return item;
+    }
+
+    /** 任务时间：优先解析轮询 jobId 里的毫秒时间戳，取不到就用目录修改时间。 */
+    private long createdEpochOf(String jobId, File jobDir) {
+        String[] parts = jobId.split("_");
+        if (parts.length >= 2) {
+            try {
+                long epoch = Long.parseLong(parts[1]);
+                if (epoch > 0L) {
+                    return epoch;
+                }
+            } catch (NumberFormatException ignored) {
+                // 兼容非时间戳命名的任务目录
+            }
+        }
+        return jobDir.lastModified();
     }
 
     /** 汇总 Pro 输出帧的网格元数据（供前端 DebrisFlow 渲染与相机定位）。 */
