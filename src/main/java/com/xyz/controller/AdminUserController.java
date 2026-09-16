@@ -1973,10 +1973,21 @@ public class AdminUserController {
             sourceCrs = avaflowSourceCrs;
         }
 
-        AscGridMetadataReader.GridInfo first = AscGridMetadataReader.read(files[0]);
         boolean cached = (hist.get("frameCount") instanceof Number)
                 && ((Number) hist.get("frameCount")).intValue() == frameCount
                 && (hist.get("globalMax") instanceof Number);
+        // 缓存里已经有网格几何/中心/bbox 时就不再读帧文件，列表查询更快
+        boolean geomCached = cached
+                && hist.get("ncols") instanceof Number
+                && hist.get("nrows") instanceof Number
+                && hist.get("cellsize") instanceof Number
+                && hist.get("centerLon") instanceof Number
+                && hist.get("centerLat") instanceof Number
+                && hist.get("bbox") instanceof List;
+        AscGridMetadataReader.GridInfo first = geomCached ? null : AscGridMetadataReader.read(files[0]);
+        int gridCols = geomCached ? ((Number) hist.get("ncols")).intValue() : first.ncols;
+        int gridRows = geomCached ? ((Number) hist.get("nrows")).intValue() : first.nrows;
+        double gridCell = geomCached ? ((Number) hist.get("cellsize")).doubleValue() : first.cellSize;
         double globalMin;
         double globalMax;
         if (cached) {
@@ -1984,21 +1995,39 @@ public class AdminUserController {
                     ? ((Number) hist.get("globalMin")).doubleValue() : 0.0;
             globalMax = ((Number) hist.get("globalMax")).doubleValue();
         } else {
+            // 旧任务没有缓存：并行扫描各帧统计极值（16 条各 41 帧的旧记录一次扫描约 1~3 秒），
+            // 统计完成后回写 history_meta.json，后续查询直接命中缓存。
+            int threads = Math.max(1, Math.min(8, Runtime.getRuntime().availableProcessors()));
+            java.util.concurrent.ExecutorService pool =
+                    java.util.concurrent.Executors.newFixedThreadPool(threads);
+            List<java.util.concurrent.Future<double[]>> futures = new ArrayList<>();
+            for (File f : files) {
+                futures.add(pool.submit(() -> {
+                    try {
+                        AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(f);
+                        return info.hasValue ? new double[] { info.minValue, info.maxValue } : null;
+                    } catch (Exception e) {
+                        System.err.println("avaflow_beta 帧统计失败 " + f.getName() + ": " + e.getMessage());
+                        return null;
+                    }
+                }));
+            }
             double min = Double.POSITIVE_INFINITY;
             double max = Double.NEGATIVE_INFINITY;
             boolean hasValue = false;
-            for (File f : files) {
+            for (java.util.concurrent.Future<double[]> future : futures) {
                 try {
-                    AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(f);
-                    if (info.hasValue) {
-                        min = Math.min(min, info.minValue);
-                        max = Math.max(max, info.maxValue);
+                    double[] stat = future.get();
+                    if (stat != null) {
+                        min = Math.min(min, stat[0]);
+                        max = Math.max(max, stat[1]);
                         hasValue = true;
                     }
                 } catch (Exception e) {
-                    System.err.println("avaflow_beta 帧统计失败 " + f.getName() + ": " + e.getMessage());
+                    // 单帧统计失败不影响其余帧
                 }
             }
+            pool.shutdown();
             globalMin = hasValue ? min : 0.0;
             globalMax = hasValue ? max : 0.0;
         }
@@ -2006,31 +2035,44 @@ public class AdminUserController {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("sourceCrs", sourceCrs);
         meta.put("field", "solid"); // r.avaflow 输出的 hflow 就是泥石流层厚度
-        meta.put("ncols", first.ncols);
-        meta.put("nrows", first.nrows);
-        meta.put("cellsize", first.cellSize);
+        meta.put("ncols", gridCols);
+        meta.put("nrows", gridRows);
+        meta.put("cellsize", gridCell);
         meta.put("globalMax", globalMax);
         meta.put("globalMin", globalMin);
         meta.put("frameCount", frameCount);
         meta.put("history", true);
         List<Double> bbox = null;
-        try {
-            double[] center = AscGridMetadataReader.transformCenter(first, sourceCrs);
-            double[] box = AscGridMetadataReader.transformBbox(first, sourceCrs);
-            meta.put("centerLon", center[0]);
-            meta.put("centerLat", center[1]);
-            bbox = Arrays.asList(box[0], box[1], box[2], box[3]);
+        if (geomCached) {
+            meta.put("centerLon", ((Number) hist.get("centerLon")).doubleValue());
+            meta.put("centerLat", ((Number) hist.get("centerLat")).doubleValue());
+            List<Double> cachedBox = new ArrayList<>();
+            for (Object v : (List<?>) hist.get("bbox")) {
+                cachedBox.add(v instanceof Number ? ((Number) v).doubleValue() : null);
+            }
+            bbox = cachedBox;
             meta.put("bbox", bbox);
-        } catch (Exception e) {
-            meta.put("centerLon", null);
-            meta.put("centerLat", null);
-            meta.put("bbox", null);
-            System.err.println("avaflow_beta 历史坐标转换失败 " + jobId + ": " + e.getMessage());
+        } else {
+            try {
+                double[] center = AscGridMetadataReader.transformCenter(first, sourceCrs);
+                double[] box = AscGridMetadataReader.transformBbox(first, sourceCrs);
+                meta.put("centerLon", center[0]);
+                meta.put("centerLat", center[1]);
+                bbox = Arrays.asList(box[0], box[1], box[2], box[3]);
+                meta.put("bbox", bbox);
+            } catch (Exception e) {
+                meta.put("centerLon", null);
+                meta.put("centerLat", null);
+                meta.put("bbox", null);
+                System.err.println("avaflow_beta 历史坐标转换失败 " + jobId + ": " + e.getMessage());
+            }
         }
 
         // 地形调控信息：优先取历史元数据，旧任务回落到任务目录里的 terrain_edits.json
         Object terrainEdits = hist.get("terrainEdits");
-        if (!(terrainEdits instanceof Collection) || ((Collection<?>) terrainEdits).isEmpty()) {
+        // 只在首次扫描（无缓存）时回查任务目录：WSL 的 UNC 路径每次探测都要上百毫秒，
+        // 查过一次就把结果写进 history_meta.json，后续列表不再访问任务目录。
+        if (!cached && (!(terrainEdits instanceof Collection) || ((Collection<?>) terrainEdits).isEmpty())) {
             File legacyEdits = new File(new File(avaflowJobsRoot, jobId), "terrain_edits.json");
             try {
                 if (legacyEdits.isFile()) {
@@ -2054,9 +2096,9 @@ public class AdminUserController {
             cache.put("frameCount", frameCount);
             cache.put("globalMin", globalMin);
             cache.put("globalMax", globalMax);
-            cache.put("ncols", first.ncols);
-            cache.put("nrows", first.nrows);
-            cache.put("cellsize", first.cellSize);
+            cache.put("ncols", gridCols);
+            cache.put("nrows", gridRows);
+            cache.put("cellsize", gridCell);
             cache.put("centerLon", meta.get("centerLon"));
             cache.put("centerLat", meta.get("centerLat"));
             cache.put("bbox", bbox);
