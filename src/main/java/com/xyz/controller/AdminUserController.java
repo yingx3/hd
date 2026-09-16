@@ -99,13 +99,13 @@ public class AdminUserController {
     @Value("${app.avaflow.friction:15,0,0,15,0,0,0,0,0.05}")
     private String avaflowFriction;
 
-    @Value("${app.avaflow.time:10,400}")
+    @Value("${app.avaflow.time:10,200}")
     private String avaflowTime;
 
     @Value("${app.avaflow.profile:159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835}")
     private String avaflowProfileDefault;
 
-    @Value("${app.avaflow.expected-frames:41}")
+    @Value("${app.avaflow.expected-frames:21}")
     private int avaflowExpectedFrames;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -1250,8 +1250,20 @@ public class AdminUserController {
                 // profile（沿程剖面线）：application.yml 里的默认剖面按波密案例写死，
                 // 换案例（如色东普）会落在计算区之外，r.avaflow 会报参数校验失败。
                 // 这里用本次 DEM 校验一次：不在区内就按「释放区中心—最陡下降路径」自动生成。
-                String profileOverride = resolveAvaflowProfile(elevationFile,
+                Map<String, Object> runCtx = prepareAvaflowRunContext(elevationFile,
                         new File(inputDir, "debris.tif"), area);
+                String profileOverride = runCtx == null ? null : (String) runCtx.get("profile");
+                Object detectedCrs = runCtx == null ? null : runCtx.get("sourceCrs");
+                // 坐标系：优先用上传高程栅格自带的 CRS。不同投影带的案例套用全局 source-crs
+                // 会让前端把结果换算到错误经纬度（如 46N 数据按 47N 换算会偏出 500+ km）。
+                final String effectiveSourceCrs = (detectedCrs == null
+                        || String.valueOf(detectedCrs).trim().isEmpty())
+                                ? avaflowSourceCrs
+                                : String.valueOf(detectedCrs).trim();
+                if (!effectiveSourceCrs.equalsIgnoreCase(avaflowSourceCrs)) {
+                    System.out.println("[avaflow_beta] 按上传高程栅格识别坐标系: " + effectiveSourceCrs
+                            + "（配置值 " + avaflowSourceCrs + " 仅作兜底）");
+                }
                 String scriptPathLinux = jobDirLinux + "/start_beta.sh";
                 String startScript = buildStartScript(prefix, area, jobDirLinux, jobId,
                         elevationPathLinux, profileOverride);
@@ -1281,7 +1293,7 @@ public class AdminUserController {
                         new File(avaflowWslHome, prefix + "_results"),
                         prefix + "_ascii").getPath();
                 Map<String, Object> conv = prepareAvaflowAscFrames(
-                        asciiDir, prefix, avaflowStaticDir, jobId, avaflowSourceCrs);
+                        asciiDir, prefix, avaflowStaticDir, jobId, effectiveSourceCrs);
                 int frameCount = ((Number) conv.get("frameCount")).intValue();
                 if (frameCount <= 0) {
                     job.put("status", "error");
@@ -1302,7 +1314,8 @@ public class AdminUserController {
                 job.put("message", "\u5b8c\u6210, \u8f93\u51fa " + frameCount + " \u5e27");
 
                 // 历史模拟：把本次运行的关键信息落盘，历史列表接口可直接读取（不必回读全部帧做统计）
-                writeAvaflowBetaHistoryMeta(jobId, conv, job.get("terrainEdits"), area);
+                writeAvaflowBetaHistoryMeta(jobId, conv, job.get("terrainEdits"), area,
+                        effectiveSourceCrs);
             } catch (Exception e) {
                 job.put("status", "error");
                 job.put("phase", "error");
@@ -2020,13 +2033,14 @@ public class AdminUserController {
 
     /** 运行结束时记录历史元数据（history_meta.json），供历史列表快速展示。 */
     private void writeAvaflowBetaHistoryMeta(String jobId, Map<String, Object> conv,
-            Object terrainEdits, String area) {
+            Object terrainEdits, String area, String sourceCrs) {
         try {
             Map<String, Object> meta = new LinkedHashMap<>();
             meta.put("jobId", jobId);
             meta.put("model", "avaflow_beta");
             meta.put("createdAtEpoch", System.currentTimeMillis());
-            meta.put("sourceCrs", avaflowSourceCrs);
+            meta.put("sourceCrs", (sourceCrs == null || sourceCrs.trim().isEmpty())
+                    ? avaflowSourceCrs : sourceCrs.trim());
             meta.put("frameCount", conv.get("frameCount"));
             meta.put("area", area);
             meta.put("terrainEdits", terrainEdits);
@@ -2384,10 +2398,12 @@ public class AdminUserController {
     }
 
     /**
-     * 校验配置里的 profile 是否落在本次计算区内：不在就按 DEM 自动生成一条沿谷剖面线。
+     * 计算前准备运行上下文：
+     * 1) 校验配置里的 profile 是否落在本次 DEM 内，不在则按「释放区中心—最陡下降路径」自动生成；
+     * 2) 读取上传高程栅格自带的坐标系，供前端把 ASC 帧换算到正确的经纬度。
      * 任何异常都返回 null，由调用方回退到配置值（不改变既有案例行为）。
      */
-    private String resolveAvaflowProfile(File elevationFile, File releaseFile, String area) {
+    private Map<String, Object> prepareAvaflowRunContext(File elevationFile, File releaseFile, String area) {
         try {
             if (elevationFile == null || !elevationFile.isFile()) {
                 return null;
@@ -2425,9 +2441,12 @@ public class AdminUserController {
             if (!"configured".equals(String.valueOf(res.get("source")))) {
                 System.out.println("[avaflow_profile] 配置剖面不在本次 DEM 内，已自动生成: " + value);
             }
-            return value;
+            Map<String, Object> ctx = new LinkedHashMap<>();
+            ctx.put("profile", value);
+            ctx.put("sourceCrs", res.get("sourceCrs"));
+            return ctx;
         } catch (Exception e) {
-            System.err.println("[avaflow_profile] 剖面校验失败，沿用配置值: " + e.getMessage());
+            System.err.println("[avaflow_profile] 剖面/坐标系识别失败，沿用配置值: " + e.getMessage());
             return null;
         }
     }

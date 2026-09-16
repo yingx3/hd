@@ -91,6 +91,15 @@ def main():
         nodata = src.nodata
         transform = src.transform
         bounds = src.bounds
+        raster_crs = src.crs
+    detected_crs = None
+    if raster_crs is not None:
+        code = None
+        try:
+            code = raster_crs.to_epsg()
+        except Exception:
+            code = None
+        detected_crs = ("EPSG:%d" % code) if code else raster_crs.to_string()
     if nodata is not None:
         z = np.where(z == nodata, np.nan, z)
     if not np.isfinite(z).any():
@@ -120,6 +129,7 @@ def main():
         result = {
             "status": "ok",
             "source": "configured",
+            "sourceCrs": detected_crs,
             "profile": ",".join("%.1f" % v for v in [n for p in cand_pts for n in p]),
             "points": len(cand_pts),
         }
@@ -155,6 +165,7 @@ def main():
         result = {
             "status": "ok",
             "source": source,
+            "sourceCrs": detected_crs,
             "profile": ",".join("%.1f" % v for v in [n2 for p in pts for n2 in p]),
             "points": len(pts),
             "startElevation": float(z[path[0]]),
