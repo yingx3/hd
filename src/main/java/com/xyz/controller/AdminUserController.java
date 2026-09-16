@@ -1121,6 +1121,7 @@ public class AdminUserController {
             try {
                 String jobDirLinux = toLinuxPath(jobDir.getAbsolutePath());
                 String elevationPathLinux = jobDirLinux + "/inputs/elev.tif";
+                File elevationFile = new File(inputDir, "elev.tif");
                 if (hasTerrainEdits) {
                     job.put("message", "\u5730\u5f62\u8c03\u63a7\u4e2d...");
                     ProcessResult terrainPr = runProcess(
@@ -1144,10 +1145,17 @@ public class AdminUserController {
                     }
                     job.put("terrainEdits", terrainResult.get("applied"));
                     elevationPathLinux = jobDirLinux + "/inputs/elev_regulated.tif";
+                    elevationFile = new File(inputDir, "elev_regulated.tif");
                     job.put("message", "r.avaflow \u6a21\u62df\u4e2d...");
                 }
+                // profile（沿程剖面线）：application.yml 里的默认剖面按波密案例写死，
+                // 换案例（如色东普）会落在计算区之外，r.avaflow 会报参数校验失败。
+                // 这里用本次 DEM 校验一次：不在区内就按「释放区中心—最陡下降路径」自动生成。
+                String profileOverride = resolveAvaflowProfile(elevationFile,
+                        new File(inputDir, "debris.tif"), area);
                 String scriptPathLinux = jobDirLinux + "/start_beta.sh";
-                String startScript = buildStartScript(prefix, area, jobDirLinux, jobId, elevationPathLinux);
+                String startScript = buildStartScript(prefix, area, jobDirLinux, jobId,
+                        elevationPathLinux, profileOverride);
                 File startFile = new File(jobDir, "start_beta.sh");
                 Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
 
@@ -2271,8 +2279,62 @@ public class AdminUserController {
         return new File(new File(projectRoot, "suanfa/avaflow"), "apply_terrain_edits.py").getAbsolutePath();
     }
 
+    /** r.avaflow 剖面线（profile）校验 / 自动生成脚本。 */
+    private String avaflowProfileScript() {
+        return new File(new File(projectRoot, "suanfa/avaflow"), "make_profile.py").getAbsolutePath();
+    }
+
+    /**
+     * 校验配置里的 profile 是否落在本次计算区内：不在就按 DEM 自动生成一条沿谷剖面线。
+     * 任何异常都返回 null，由调用方回退到配置值（不改变既有案例行为）。
+     */
+    private String resolveAvaflowProfile(File elevationFile, File releaseFile, String area) {
+        try {
+            if (elevationFile == null || !elevationFile.isFile()) {
+                return null;
+            }
+            String areaKey = (area == null || area.isEmpty()) ? "default" : area;
+            String configured = env.getProperty("app.avaflow.profile." + areaKey,
+                    env.getProperty("app.avaflow.profile", avaflowProfileDefault));
+            List<String> cmd = new ArrayList<>(Arrays.asList(
+                    pythonExe, avaflowProfileScript(),
+                    "--elev", elevationFile.getAbsolutePath()));
+            if (releaseFile != null && releaseFile.isFile()) {
+                cmd.add("--release");
+                cmd.add(releaseFile.getAbsolutePath());
+            }
+            if (configured != null && !configured.trim().isEmpty()) {
+                cmd.add("--candidate");
+                cmd.add(configured.trim());
+            }
+            ProcessResult pr = runProcess(cmd, new File(projectRoot), 180,
+                    "[avaflow_profile] ", StandardCharsets.UTF_8);
+            String json = extractSentinel(pr.output, "AVAFLOW_PROFILE_JSON=");
+            if (json.isEmpty()) {
+                return null;
+            }
+            Map<String, Object> res = OBJECT_MAPPER.readValue(json,
+                    new TypeReference<Map<String, Object>>() {
+                    });
+            if (!"ok".equals(String.valueOf(res.get("status")))) {
+                return null;
+            }
+            String value = res.get("profile") == null ? "" : String.valueOf(res.get("profile")).trim();
+            if (value.isEmpty() || !value.matches("[0-9eE+\\-.,\\s]+")) {
+                return null;
+            }
+            if (!"configured".equals(String.valueOf(res.get("source")))) {
+                System.out.println("[avaflow_profile] 配置剖面不在本次 DEM 内，已自动生成: " + value);
+            }
+            return value;
+        } catch (Exception e) {
+            System.err.println("[avaflow_profile] 剖面校验失败，沿用配置值: " + e.getMessage());
+            return null;
+        }
+    }
+
     private String buildStartScript(String prefix, String area, String jobDirLinux, String jobId,
-                                    String elevationPathLinux) {
+                                    String elevationPathLinux, String profileOverride) {
         String suffix = jobId.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
         String elevRaster = "beta_elev_" + suffix;
         String debrisRaster = "beta_debris_" + suffix;
@@ -2294,8 +2356,10 @@ public class AdminUserController {
         sb.append("g.region -s rast=").append(elevRaster).append("\n");
 
         String areaKey = (area == null || area.isEmpty()) ? "default" : area;
-        String profile = env.getProperty("app.avaflow.profile." + areaKey,
+        String configuredProfile = env.getProperty("app.avaflow.profile." + areaKey,
                 env.getProperty("app.avaflow.profile", avaflowProfileDefault));
+        String profile = (profileOverride == null || profileOverride.isEmpty())
+                ? configuredProfile : profileOverride;
         String friction = env.getProperty("app.avaflow.friction", avaflowFriction);
         String time = env.getProperty("app.avaflow.time", avaflowTime);
         String phases = env.getProperty("app.avaflow.phases", avaflowPhases);
