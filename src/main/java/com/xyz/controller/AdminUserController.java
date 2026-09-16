@@ -553,6 +553,88 @@ public class AdminUserController {
         return (time == null) ? "" : time.trim().replaceAll("[^0-9A-Za-z._-]", "");
     }
 
+    /**
+     * 「灾害危险区划」静态图层列表：扫描静态目录里风险源模型输出的 dangerLevel_*.png，
+     * 返回文件名、时间、降雨历时与地理范围（供前端按矩形贴图）。
+     */
+    @GetMapping("/danger_level_list")
+    public ResponseEntity<?> dangerLevelList(@RequestParam(value = "limit", required = false) Integer limit) {
+        int max = (limit == null || limit <= 0) ? 40 : Math.min(200, limit);
+        File dir = new File(staticDir);
+        List<Map<String, Object>> items = new ArrayList<>();
+        int total = 0;
+        File[] files = dir.listFiles((d, name) ->
+                name.matches("dangerLevel_\\d{8}_\\d{6}_\\d{3}_\\d+\\.png"));
+        if (files != null) {
+            Arrays.sort(files, Comparator.comparing(File::getName).reversed());
+            Pattern p = Pattern.compile("dangerLevel_(\\d{8})_(\\d{6})_(\\d{3})_(\\d+)\\.png");
+            for (File f : files) {
+                Matcher m = p.matcher(f.getName());
+                if (!m.matches()) {
+                    continue;
+                }
+                long duration = 0L;
+                try {
+                    duration = Long.parseLong(m.group(4));
+                } catch (NumberFormatException ignored) {
+                }
+                double[] bbox = readDangerLevelBbox(f);
+                if (bbox == null) {
+                    continue;
+                }
+                String ymd = m.group(1);
+                String hms = m.group(2);
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("file", f.getName());
+                item.put("url", "/ng/" + f.getName());
+                item.put("timestamp", ymd + "_" + hms + "_" + m.group(3));
+                item.put("timeText", ymd.substring(0, 4) + "-" + ymd.substring(4, 6) + "-" + ymd.substring(6, 8)
+                        + " " + hms.substring(0, 2) + ":" + hms.substring(2, 4) + ":" + hms.substring(4, 6));
+                item.put("durationSeconds", duration);
+                item.put("durationText", duration > 0 && duration % 3600 == 0
+                        ? (duration / 3600) + "h" : (duration > 0 ? duration + "s" : ""));
+                item.put("bbox", Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
+                total++;
+                if (items.size() < max) {
+                    items.add(item);
+                }
+            }
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("status", "ok");
+        resp.put("total", total);
+        resp.put("items", items);
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * 危险区划 PNG 的地理范围：优先读同名 .json 边车；
+     * 旧图（风险源模型早期版本没有边车）回落到 TRIGRS 教程网格的范围：
+     * data/tutorial/dem.asc，879 x 1553 @10m，EPSG:32646 (930466.85, 3443145.16)-(939256.85, 3458675.16)
+     * 换算到 WGS84 即下方常量（与前端原有的 leftlong/rightlong 默认取景一致）。
+     */
+    private double[] readDangerLevelBbox(File png) {
+        File sidecar = new File(png.getAbsolutePath() + ".json");
+        if (sidecar.isFile()) {
+            try {
+                Map<String, Object> m = OBJECT_MAPPER.readValue(sidecar,
+                        new TypeReference<Map<String, Object>>() {
+                        });
+                Object w = m.get("west");
+                Object s = m.get("south");
+                Object e = m.get("east");
+                Object n = m.get("north");
+                if (w instanceof Number && s instanceof Number && e instanceof Number && n instanceof Number) {
+                    return new double[] { ((Number) w).doubleValue(), ((Number) s).doubleValue(),
+                            ((Number) e).doubleValue(), ((Number) n).doubleValue() };
+                }
+            } catch (Exception ignored) {
+                // 边车损坏时回落默认范围
+            }
+        }
+        return new double[] { 97.508953, 31.040039, 97.607531, 31.182979 };
+    }
+
     //风险txt文件转为png
     public static String GrayscaleImageGenerator(String projectRoot,String color,String time) throws Exception {
         System.out.println("开始生成图-----");
@@ -677,6 +759,23 @@ public class AdminUserController {
             System.out.println("图像生成为:"+uniqueFileName);
             z=destPts;
             q=uniqueFileName;
+            // 同步记录该图的地理范围（WGS84），供「数值计算模型集 → 区域灾害本底数据点位 → 灾害危险区划」
+            // 作为静态图层直接贴图回放（旧图没有边车，接口会回落到 TRIGRS 教程网格范围）。
+            try {
+                Map<String, Object> sidecar = new LinkedHashMap<>();
+                sidecar.put("file", uniqueFileName);
+                sidecar.put("color", color);
+                sidecar.put("time", safeTime);
+                sidecar.put("west", z[0]);
+                sidecar.put("south", z[1]);
+                sidecar.put("east", z[4]);
+                sidecar.put("north", z[5]);
+                sidecar.put("ncols", width);
+                sidecar.put("nrows", height);
+                OBJECT_MAPPER.writeValue(new java.io.File(staticDir, uniqueFileName + ".json"), sidecar);
+            } catch (Exception ignored) {
+                // 边车写入失败不影响主流程，接口会回落到默认范围
+            }
         } catch (IOException e) {
             System.out.println("[风险源模型] 结果图生成失败: " + e);
             e.printStackTrace();
