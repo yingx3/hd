@@ -40,8 +40,8 @@ app:
     # r.avaflow 参数（默认即 WSL start.sh 的 BH02 实验参数）
     phases: 3
     friction: "15,0,0,15,0,0,0,0,0.05"
-    time: "10,400"
-    expected-frames: 41
+    time: "10,200"
+    expected-frames: 21
     # 默认滑移路径 profile；按区域配置：在同级写 profile.巴宜区 / profile.波密县
     profile: "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"
     # profile.巴宜区: "..."
