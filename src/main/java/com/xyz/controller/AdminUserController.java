@@ -1090,6 +1090,20 @@ public class AdminUserController {
         }
 
         String area = str(body, "area");
+
+        // 沿程调控：前端手绘范围 + 加高值，先抬高 elevation 栅格再交给 r.avaflow 计算
+        Object terrainEditsRaw = body.get("terrainEdits");
+        final boolean hasTerrainEdits = (terrainEditsRaw instanceof Collection)
+                && !((Collection<?>) terrainEditsRaw).isEmpty();
+        final File terrainEditsFile = new File(jobDir, "terrain_edits.json");
+        if (hasTerrainEdits) {
+            try {
+                OBJECT_MAPPER.writeValue(terrainEditsFile, terrainEditsRaw);
+            } catch (IOException e) {
+                return ResponseEntity.badRequest().body("\u5730\u5f62\u8c03\u63a7\u53c2\u6570\u5199\u5165\u5931\u8d25: " + e.getMessage());
+            }
+        }
+
         String prefix = "beta_" + jobId;
         Map<String, Object> job = new java.util.concurrent.ConcurrentHashMap<>();
         job.put("jobId", jobId);
@@ -1106,8 +1120,34 @@ public class AdminUserController {
         new Thread(() -> {
             try {
                 String jobDirLinux = toLinuxPath(jobDir.getAbsolutePath());
+                String elevationPathLinux = jobDirLinux + "/inputs/elev.tif";
+                if (hasTerrainEdits) {
+                    job.put("message", "\u5730\u5f62\u8c03\u63a7\u4e2d...");
+                    ProcessResult terrainPr = runProcess(
+                            Arrays.asList(pythonExe, avaflowTerrainScript(),
+                                    "--input", new File(inputDir, "elev.tif").getAbsolutePath(),
+                                    "--edits", terrainEditsFile.getAbsolutePath(),
+                                    "--output", new File(inputDir, "elev_regulated.tif").getAbsolutePath()),
+                            new File(projectRoot), processTimeoutSeconds,
+                            "[avaflow_terrain] ", StandardCharsets.UTF_8);
+                    String terrainJson = extractSentinel(terrainPr.output, "AVAFLOW_TERRAIN_JSON=");
+                    Map<String, Object> terrainResult = terrainJson.isEmpty() ? null
+                            : OBJECT_MAPPER.readValue(terrainJson, new TypeReference<Map<String, Object>>() {
+                            });
+                    if (terrainPr.exitCode != 0 || terrainResult == null
+                            || !"ok".equals(String.valueOf(terrainResult.get("status")))) {
+                        job.put("status", "error");
+                        job.put("phase", "error");
+                        job.put("message", "\u5730\u5f62\u8c03\u63a7\u5931\u8d25: "
+                                + (terrainResult != null ? terrainResult.get("message") : tail(terrainPr.output, 800)));
+                        return;
+                    }
+                    job.put("terrainEdits", terrainResult.get("applied"));
+                    elevationPathLinux = jobDirLinux + "/inputs/elev_regulated.tif";
+                    job.put("message", "r.avaflow \u6a21\u62df\u4e2d...");
+                }
                 String scriptPathLinux = jobDirLinux + "/start_beta.sh";
-                String startScript = buildStartScript(prefix, area, jobDirLinux, jobId);
+                String startScript = buildStartScript(prefix, area, jobDirLinux, jobId, elevationPathLinux);
                 File startFile = new File(jobDir, "start_beta.sh");
                 Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
 
@@ -1929,16 +1969,24 @@ public class AdminUserController {
         return s.replace("\\", "/");
     }
 
-    private String buildStartScript(String prefix, String area, String jobDirLinux, String jobId) {
+    /** r.avaflow 输入高程地形调控脚本（沿程调控：手绘多边形对 elevation 加高）。 */
+    private String avaflowTerrainScript() {
+        return new File(new File(projectRoot, "suanfa/avaflow"), "apply_terrain_edits.py").getAbsolutePath();
+    }
+
+    private String buildStartScript(String prefix, String area, String jobDirLinux, String jobId,
+                                    String elevationPathLinux) {
         String suffix = jobId.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
         String elevRaster = "beta_elev_" + suffix;
         String debrisRaster = "beta_debris_" + suffix;
         String impactRaster = "beta_impact_" + suffix;
+        String elevationInput = (elevationPathLinux == null || elevationPathLinux.isEmpty())
+                ? jobDirLinux + "/inputs/elev.tif" : elevationPathLinux;
 
         StringBuilder sb = new StringBuilder();
         sb.append("# r.avaflow beta script (auto-generated)\n");
         sb.append("r.in.gdal -o --overwrite input=")
-                .append(shellQuote(jobDirLinux + "/inputs/elev.tif"))
+                .append(shellQuote(elevationInput))
                 .append(" output=").append(elevRaster).append("\n");
         sb.append("r.in.gdal -o --overwrite input=")
                 .append(shellQuote(jobDirLinux + "/inputs/debris.tif"))
