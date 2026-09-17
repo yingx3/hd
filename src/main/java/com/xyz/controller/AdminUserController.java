@@ -77,6 +77,10 @@ public class AdminUserController {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** WSL 发行版名：启动 GRASS、探测 mapset 锁都用它 */
+    @Value("${app.avaflow.wsl-distro:Ubuntu-20.04}")
+    private String avaflowWslDistro;
+
     @Value("${app.avaflow.wsl-home://wsl.localhost/Ubuntu-20.04/home/wm}")
     private String avaflowWslHome;
 
@@ -1366,8 +1370,20 @@ public class AdminUserController {
                 File startFile = new File(jobDir, "start_beta.sh");
                 Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
 
+                // 启动前自检 GRASS mapset 锁（方案A）：
+                // 上次被强杀留下的残留锁自动清理；确实还有任务在跑则直接拒绝，
+                // 避免两个任务并发写同一个 mapset 把数据写坏。
+                String grassLockError = ensureGrassMapsetLockFree();
+                if (grassLockError != null) {
+                    job.put("status", "error");
+                    job.put("phase", "error");
+                    job.put("message", grassLockError);
+                    System.out.println("[avaflow_beta] " + grassLockError);
+                    return;
+                }
+
                 ProcessResult pr = runProcess(
-                        Arrays.asList("wsl", "-d", "Ubuntu-20.04", "--", "bash", "-c",
+                        Arrays.asList("wsl", "-d", avaflowWslDistro, "--", "bash", "-c",
                                 "cd " + shellQuote(avaflowWslLinuxHome)
                                         + " && chmod +x " + shellQuote(scriptPathLinux)
                                         + " && grass " + shellQuote(avaflowGrassGisdbase)
@@ -2483,6 +2499,86 @@ public class AdminUserController {
 
     private String shellQuote(String value) {
         return "'" + (value == null ? "" : value.replace("'", "'\\''")) + "'";
+    }
+
+    /**
+     * GRASS 共享 mapset 锁自检（启动 r.avaflow 之前调用）。
+     *
+     * GRASS 会在 mapset 目录下用 .gislock 记录当前会话的 pid；进程被 kill -9、
+     * 或 Windows 侧 wsl.exe 被强制终止后，这个锁不会自动清理，下次运行就会报
+     * “Concurrent use not allowed”，只能人工删锁。
+     *
+     * 处理策略：
+     *   1) 没有锁 → 直接运行；
+     *   2) 有锁，但锁里的 pid 已不存在 → 判定为残留锁，自动删除后继续运行；
+     *   3) 有锁，且进程仍在（或锁内容读不出来但确实有 grass 进程）→ 返回提示，
+     *      本次不启动，避免并发使用同一个 mapset。
+     *
+     * @return null 表示可以继续；否则返回给前端展示的提示文字
+     */
+    private String ensureGrassMapsetLockFree() {
+        String gisdbase = avaflowGrassGisdbase == null ? "" : avaflowGrassGisdbase.trim();
+        if (gisdbase.isEmpty()) {
+            return null;
+        }
+        while (gisdbase.endsWith("/")) {
+            gisdbase = gisdbase.substring(0, gisdbase.length() - 1);
+        }
+        final String lockPath = gisdbase + "/.gislock";
+        try {
+            ProcessResult exists = runProcess(
+                    Arrays.asList("wsl", "-d", avaflowWslDistro, "--", "bash", "-c",
+                            "test -f " + shellQuote(lockPath) + " && echo LOCKED || echo FREE"),
+                    null, 60, "[grass-lock] ", StandardCharsets.UTF_8);
+            if (exists.output == null || !exists.output.contains("LOCKED")) {
+                return null;
+            }
+
+            ProcessResult pidOut = runProcess(
+                    Arrays.asList("wsl", "-d", avaflowWslDistro, "--", "bash", "-c",
+                            "od -An -tu4 " + shellQuote(lockPath) + " 2>/dev/null | tr -d ' '"),
+                    null, 60, "[grass-lock] ", StandardCharsets.UTF_8);
+            long lockPid = -1L;
+            try {
+                lockPid = Long.parseLong(pidOut.output == null ? "" : pidOut.output.trim());
+            } catch (NumberFormatException ignore) {
+                // 锁内容异常，下面退化为「有没有 grass 进程」判断
+            }
+
+            if (lockPid > 0) {
+                ProcessResult alive = runProcess(
+                        Arrays.asList("wsl", "-d", avaflowWslDistro, "--", "bash", "-c",
+                                "ps -p " + lockPid + " -o pid= >/dev/null 2>&1 && echo ALIVE || echo DEAD"),
+                        null, 60, "[grass-lock] ", StandardCharsets.UTF_8);
+                if (alive.output != null && alive.output.contains("ALIVE")) {
+                    System.out.println("[grass-lock] mapset 正被 pid " + lockPid + " 占用，拒绝启动: " + lockPath);
+                    return "GRASS 计算目录正被另一个任务占用（进程 " + lockPid + " 仍在运行），本次未启动计算。"
+                            + "请等它跑完；若确认它已卡死，可在 WSL 里执行 kill -9 " + lockPid
+                            + " 并删除 " + lockPath + " 后重试。";
+                }
+            } else {
+                ProcessResult anyGrass = runProcess(
+                        Arrays.asList("wsl", "-d", avaflowWslDistro, "--", "bash", "-c",
+                                "pgrep -x grass >/dev/null 2>&1 && echo ALIVE || echo NONE"),
+                        null, 60, "[grass-lock] ", StandardCharsets.UTF_8);
+                if (anyGrass.output != null && anyGrass.output.contains("ALIVE")) {
+                    System.out.println("[grass-lock] 锁内容无法解析但存在 grass 进程，拒绝启动: " + lockPath);
+                    return "GRASS 计算目录正被另一个任务占用，本次未启动计算；"
+                            + "请等它跑完，或确认没有 GRASS 任务后删除 " + lockPath + " 再重试。";
+                }
+            }
+
+            runProcess(
+                    Arrays.asList("wsl", "-d", avaflowWslDistro, "--", "bash", "-c",
+                            "rm -f " + shellQuote(lockPath) + " && echo CLEANED"),
+                    null, 60, "[grass-lock] ", StandardCharsets.UTF_8);
+            System.out.println("[grass-lock] 检测到残留锁（pid " + lockPid + " 已不存在），已自动清理: " + lockPath);
+            return null;
+        } catch (Exception e) {
+            // 自检失败不阻断计算（真并发时 GRASS 自己也会报错兜底）
+            System.out.println("[grass-lock] 锁自检失败（忽略，继续运行）: " + e.getMessage());
+            return null;
+        }
     }
 
     private String tail(String s, int max) {

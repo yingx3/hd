@@ -25,6 +25,8 @@ spring:
 # 洪水泥石流启动动力学模型_beta / r.avaflow(avaflow) 配置
 app:
   avaflow:
+    # WSL 发行版名（启动 GRASS、检查 GRASS mapset 残留锁都用它）
+    wsl-distro: Ubuntu-20.04
     # Windows 访问 WSL 的根目录（用正斜杠 UNC）
     wsl-home: //wsl.localhost/Ubuntu-20.04/home/wm
     # WSL 内路径（wsl 命令 cd 用）

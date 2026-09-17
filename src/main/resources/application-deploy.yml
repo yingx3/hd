@@ -24,6 +24,8 @@ app:
   inference-script: E:/ZHLXT/demo/src/assets/src/inference.py
   transformer-script: E:/ZHLXT/hd/hd-mao_0322/suanfa/dzd/scripts/transformer1d.py
   avaflow:
+    # WSL 发行版名（启动 GRASS、检查 GRASS mapset 残留锁都用它）
+    wsl-distro: Ubuntu-20.04
     wsl-home: //wsl.localhost/Ubuntu-20.04/home/wm
     wsl-linux-home: /home/wm
     jobs-root: //wsl.localhost/Ubuntu-20.04/home/wm/avaflow_jobs
