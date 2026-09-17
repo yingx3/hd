@@ -1302,6 +1302,24 @@ public class AdminUserController {
                     return;
                 }
 
+                // 沿程调控：统计「范围内是否真的过流、峰值流深」，并把带多边形的 terrainEdits
+                // 注入 meta（前端据此提示调控是否生效并在地图上标注调控范围）
+                if (hasTerrainEdits) {
+                    List<Map<String, Object>> inspected = inspectAvaflowRegulation(
+                            new File(new File(avaflowStaticDir, "avaflow_beta"),
+                                    jobId + File.separator + "frames"),
+                            prefix, effectiveSourceCrs, terrainEditsFile, job.get("terrainEdits"));
+                    if (inspected != null) {
+                        job.put("terrainEdits", inspected);
+                        Object metaObj = conv.get("meta");
+                        if (metaObj instanceof Map) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> m = (Map<String, Object>) metaObj;
+                            m.put("terrainEdits", inspected);
+                        }
+                    }
+                }
+
                 job.put("status", "done");
                 job.put("phase", "done");
                 job.put("progress", 100);
@@ -2390,6 +2408,71 @@ public class AdminUserController {
     /** r.avaflow 输入高程地形调控脚本（沿程调控：手绘多边形对 elevation 加高）。 */
     private String avaflowTerrainScript() {
         return new File(new File(projectRoot, "suanfa/avaflow"), "apply_terrain_edits.py").getAbsolutePath();
+    }
+
+    /** r.avaflow 沿程调控效果自检脚本（范围内是否过流、峰值流深）。 */
+    private String avaflowCheckScript() {
+        return new File(new File(projectRoot, "suanfa/avaflow"), "check_regulation_effect.py").getAbsolutePath();
+    }
+
+    /**
+     * 沿程调控效果自检：读取本次输出的全部 ASC 帧求峰值场，统计调控范围内的过流情况，
+     * 并把 flowPathCells / flowPathMax 并入 terrainEdits（与断链调控(Pro)侧字段一致，
+     * 前端即可复用同一套「是否真的流经该范围」的提示逻辑）。失败时原样返回，不影响结果。
+     */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> inspectAvaflowRegulation(File framesDir, String prefix,
+            String sourceCrs, File editsFile, Object baseEdits) {
+        List<Map<String, Object>> base = new ArrayList<>();
+        if (baseEdits instanceof Collection) {
+            for (Object o : (Collection<?>) baseEdits) {
+                if (o instanceof Map) {
+                    base.add(new LinkedHashMap<>((Map<String, Object>) o));
+                }
+            }
+        }
+        if (base.isEmpty() || framesDir == null || !framesDir.isDirectory()
+                || editsFile == null || !editsFile.isFile()) {
+            return base.isEmpty() ? null : base;
+        }
+        try {
+            List<String> cmd = new ArrayList<>(Arrays.asList(
+                    pythonExe, avaflowCheckScript(),
+                    "--frames-dir", framesDir.getAbsolutePath(),
+                    "--prefix", prefix,
+                    "--crs", sourceCrs,
+                    "--edits", editsFile.getAbsolutePath()));
+            ProcessResult pr = runProcess(cmd, new File(projectRoot), 600,
+                    "[avaflow_check] ", StandardCharsets.UTF_8);
+            String json = extractSentinel(pr.output, "AVAFLOW_CHECK_JSON=");
+            if (json.isEmpty()) {
+                return base;
+            }
+            Map<String, Object> res = OBJECT_MAPPER.readValue(json,
+                    new TypeReference<Map<String, Object>>() {
+                    });
+            if (!"ok".equals(String.valueOf(res.get("status"))) || !(res.get("applied") instanceof List)) {
+                return base;
+            }
+            for (Object o : (List<?>) res.get("applied")) {
+                if (!(o instanceof Map)) {
+                    continue;
+                }
+                Map<String, Object> m = (Map<String, Object>) o;
+                int idx = m.get("index") instanceof Number ? ((Number) m.get("index")).intValue() : -1;
+                for (Map<String, Object> item : base) {
+                    int itemIdx = item.get("index") instanceof Number
+                            ? ((Number) item.get("index")).intValue() : -1;
+                    if (idx > 0 && itemIdx == idx) {
+                        item.put("flowPathCells", m.get("flowPathCells"));
+                        item.put("flowPathMax", m.get("flowPathMax"));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[avaflow_check] 调控效果自检失败（不影响结果回放）: " + e.getMessage());
+        }
+        return base;
     }
 
     /** r.avaflow 剖面线（profile）校验 / 自动生成脚本。 */
