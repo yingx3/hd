@@ -36,7 +36,7 @@ app:
     # ASC/GeoJSON 输出目录（nginx html 根，前端 /ng 可访问）
     static-dir: E:/softwares/nginx-1.26.2/nginx-1.26.2/html
     # 执行超时（秒）
-    timeout: 3600
+    timeout: 7200
     # r.avaflow 参数（默认即 WSL start.sh 的 BH02 实验参数）
     phases: 3
     friction: "15,0,0,15,0,0,0,0,0.05"

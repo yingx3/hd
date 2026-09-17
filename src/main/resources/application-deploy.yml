@@ -30,7 +30,7 @@ app:
     source-crs: EPSG:32647
     grass-gisdbase: /home/wm/grassdata/demo1/PERMANENT
     static-dir: E:/ZHLXT/nginx-1.26.2/nginx-1.26.2/html
-    timeout: 3600
+    timeout: 7200
     phases: 3
     friction: "15,0,0,15,0,0,0,0,0.05"
     time: "10,200"
