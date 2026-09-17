@@ -600,6 +600,49 @@ public class AdminUserController {
                 }
             }
         }
+        // 固定危险区划（灾害链风险源数据 → 灾害数据 → 灾害危险区划 的默认展示）：
+        // 由「风险源定量识别与表征模型」的一次结果快照而来，见 <staticDir>/danger_zone/
+        try {
+            File fixedDir = new File(staticDir, "danger_zone");
+            File fixedPng = new File(fixedDir, "hazard_zone.png");
+            if (fixedPng.isFile()) {
+                double[] bb = readDangerLevelBbox(fixedPng);
+                if (bb != null) {
+                    String srcName = "";
+                    String timeText = "";
+                    String durationText = "";
+                    File fixedMeta = new File(fixedDir, "hazard_zone.png.json");
+                    if (fixedMeta.isFile()) {
+                        try {
+                            Map<String, Object> fm = OBJECT_MAPPER.readValue(fixedMeta,
+                                    new TypeReference<Map<String, Object>>() {
+                                    });
+                            srcName = fm.get("sourceFile") == null ? "" : String.valueOf(fm.get("sourceFile"));
+                            timeText = fm.get("timeText") == null ? "" : String.valueOf(fm.get("timeText"));
+                            durationText = fm.get("durationText") == null ? "" : String.valueOf(fm.get("durationText"));
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    Map<String, Object> fixed = new LinkedHashMap<>();
+                    fixed.put("file", "hazard_zone");
+                    fixed.put("url", "/ng/danger_zone/hazard_zone.png");
+                    fixed.put("fixed", true);
+                    fixed.put("timestamp", "");
+                    fixed.put("durationSeconds", 0);
+                    fixed.put("durationText", durationText);
+                    fixed.put("timeText", "固定危险区划"
+                            + (timeText.isEmpty() ? "" : "（" + timeText
+                            + (durationText.isEmpty() ? "" : " · " + durationText) + "）"));
+                    fixed.put("sourceFile", srcName);
+                    fixed.put("bbox", Arrays.asList(bb[0], bb[1], bb[2], bb[3]));
+                    items.add(0, fixed);
+                    total++;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("固定危险区划读取失败: " + e.getMessage());
+        }
+
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("status", "ok");
         resp.put("total", total);
@@ -625,8 +668,20 @@ public class AdminUserController {
                 Object e = m.get("east");
                 Object n = m.get("north");
                 if (w instanceof Number && s instanceof Number && e instanceof Number && n instanceof Number) {
-                    return new double[] { ((Number) w).doubleValue(), ((Number) s).doubleValue(),
-                            ((Number) e).doubleValue(), ((Number) n).doubleValue() };
+                    double ww = ((Number) w).doubleValue();
+                    double ss = ((Number) s).doubleValue();
+                    double ee = ((Number) e).doubleValue();
+                    double nn = ((Number) n).doubleValue();
+                    // 历史数据：早期版本经纬度写反（west 里是纬度、south 里是经度），这里自动纠正
+                    if (Math.abs(ww) <= 90 && Math.abs(ss) > 90) {
+                        double tmp = ww;
+                        ww = ss;
+                        ss = tmp;
+                        tmp = ee;
+                        ee = nn;
+                        nn = tmp;
+                    }
+                    return new double[] { ww, ss, ee, nn };
                 }
             } catch (Exception ignored) {
                 // 边车损坏时回落默认范围
@@ -708,8 +763,10 @@ public class AdminUserController {
             y3 = y2;
             y4 = y1;
 
-            CoordinateReferenceSystem sourceCRS = CRS.decode("EPSG:32646");
-            CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326");
+            // 必须指定 true（强制 XY：easting,northing -> lon,lat）；否则 GeoTools 按 EPSG 轴序
+            // 解释成 (northing, easting)，写出的经纬度会左右/上下颠倒
+            CoordinateReferenceSystem sourceCRS = CRS.decode("EPSG:32646", true);
+            CoordinateReferenceSystem targetCRS = CRS.decode("EPSG:4326", true);
             MathTransform transformToWGS84 = CRS.findMathTransform(sourceCRS, targetCRS);
 
             double[] srcPts = {x1, y1, x2, y2, x3, y3, x4, y4};
