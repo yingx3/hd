@@ -611,6 +611,8 @@ public class AdminUserController {
                     String srcName = "";
                     String timeText = "";
                     String durationText = "";
+                    int fixedW = 0;
+                    int fixedH = 0;
                     File fixedMeta = new File(fixedDir, "hazard_zone.png.json");
                     if (fixedMeta.isFile()) {
                         try {
@@ -620,7 +622,24 @@ public class AdminUserController {
                             srcName = fm.get("sourceFile") == null ? "" : String.valueOf(fm.get("sourceFile"));
                             timeText = fm.get("timeText") == null ? "" : String.valueOf(fm.get("timeText"));
                             durationText = fm.get("durationText") == null ? "" : String.valueOf(fm.get("durationText"));
+                            if (fm.get("ncols") instanceof Number) {
+                                fixedW = ((Number) fm.get("ncols")).intValue();
+                            }
+                            if (fm.get("nrows") instanceof Number) {
+                                fixedH = ((Number) fm.get("nrows")).intValue();
+                            }
                         } catch (Exception ignored) {
+                        }
+                        if (fixedW <= 0 || fixedH <= 0) {
+                            // 边车里没有尺寸时直接读 PNG 头
+                            try {
+                                java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(fixedPng);
+                                if (img != null) {
+                                    fixedW = img.getWidth();
+                                    fixedH = img.getHeight();
+                                }
+                            } catch (Exception ignored) {
+                            }
                         }
                     }
                     Map<String, Object> fixed = new LinkedHashMap<>();
@@ -634,6 +653,8 @@ public class AdminUserController {
                             + (timeText.isEmpty() ? "" : "（" + timeText
                             + (durationText.isEmpty() ? "" : " · " + durationText) + "）"));
                     fixed.put("sourceFile", srcName);
+                    fixed.put("width", fixedW > 0 ? fixedW : 879);
+                    fixed.put("height", fixedH > 0 ? fixedH : 1553);
                     fixed.put("bbox", Arrays.asList(bb[0], bb[1], bb[2], bb[3]));
                     items.add(0, fixed);
                     total++;
