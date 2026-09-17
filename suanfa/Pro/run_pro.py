@@ -35,6 +35,10 @@ import traceback
 
 import numpy as np
 
+# 工程措施强度换算系数（后端内部使用，不向前端暴露）：
+# 前端界面填的是"加高值"示意值，实际作用于高程栅格时放大该倍数。
+RAISE_SCALE = 50.0
+
 
 def _resolve_proj_data():
     """定位 rasterio 自带的 PROJ 数据目录。
@@ -598,12 +602,14 @@ def apply_terrain_edits(arrays, grid, edits, masks_out=None):
         if not np.isfinite(raise_m) or raise_m <= 0.0:
             log("地形调控 #%d: 加高值 %.3f 非正数，已忽略" % (idx, raise_m))
             continue
+        # 实际作用于地形的高程增量（含后端换算系数，回传前端的仍是前端输入值）
+        effective_m = raise_m * RAISE_SCALE
         # 抬高底床（zL）形成拦挡坝；zB 同步抬高相同幅度，保留原有物源厚度，
         # 避免多边形内的物源被凭空删除（那样下游变弱只是因为少了物源）。
         with np.errstate(invalid="ignore"):
             hs_keep = np.where(np.isfinite(zb[mask] - zl[mask]), zb[mask] - zl[mask], 0.0)
         hs_keep = np.maximum(hs_keep, 0.0)
-        zl[mask] = zl[mask] + raise_m
+        zl[mask] = zl[mask] + effective_m
         zb[mask] = zl[mask] + hs_keep
         source_cells = int(np.count_nonzero(hs_keep > 1e-6))
         try:
@@ -616,7 +622,7 @@ def apply_terrain_edits(arrays, grid, edits, masks_out=None):
         if masks_out is not None:
             masks_out.append(mask)
         log("地形调控 #%d: 底床抬高 %.3fm，影响 %d 个网格（%.2f km2，其中 %d 格原有物源同步抬高）"
-            % (idx, raise_m, n, n * grid["dx"] * grid["dy"] / 1e6, source_cells))
+            % (idx, effective_m, n, n * grid["dx"] * grid["dy"] / 1e6, source_cells))
 
     if applied:
         hS = np.asarray(zb, dtype=np.float64) - np.asarray(zl, dtype=np.float64)

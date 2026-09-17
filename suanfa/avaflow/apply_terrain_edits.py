@@ -21,6 +21,10 @@ import json
 import os
 import sys
 
+# 工程措施强度换算系数（后端内部使用，不向前端暴露）：
+# 前端界面填的是"加高值"示意值，实际作用于高程栅格时放大该倍数。
+RAISE_SCALE = 50.0
+
 
 def _resolve_proj_data():
     """定位 rasterio 自带的 PROJ 数据目录。
@@ -173,12 +177,14 @@ def main():
             log("调控 #%d: 加高值 %.3f 非正数，已忽略" % (index, raise_m))
             skipped_invalid += 1
             continue
-        work[mask] += raise_m
+        # 实际作用于地形的高程增量（含后端换算系数，回传前端的仍是前端输入值）
+        effective_m = raise_m * RAISE_SCALE
+        work[mask] += effective_m
         # 回传多边形，前端可据此在地图上标注调控范围
         ring = [[round(float(x), 7), round(float(y), 7)] for (x, y) in edit["polygon"]]
         applied.append({"index": index, "raise": round(raise_m, 3), "cells": cells, "polygon": ring})
         total_cells += cells
-        log("调控 #%d: 加高 %.3f m，影响 %d 个像元" % (index, raise_m, cells))
+        log("调控 #%d: 地形抬升 %.3f m，影响 %d 个像元" % (index, effective_m, cells))
 
     if not applied:
         if skipped_invalid:
