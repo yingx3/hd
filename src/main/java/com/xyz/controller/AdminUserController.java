@@ -974,13 +974,31 @@ public class AdminUserController {
                             String.valueOf(sampling_rate)),
                     null, processTimeoutSeconds, "[Python] ", StandardCharsets.UTF_8);
             if (pr.exitCode != 0) {
-                return ResponseEntity.internalServerError().body("Python script failed");
+                // 带上 Python 侧日志尾部，便于定位（此前只有一句 Python script failed）
+                return ResponseEntity.internalServerError()
+                        .body("Python script failed: " + tail(pr.output, 800));
             }
 
             String outputJson = extractSentinel(pr.output, "RESULT_JSON=");
-            String echarts_data = extractSentinel(pr.output, "echarts=");
+            // echarts 数据优先从文件读取（脚本会输出 echarts_file=...），
+            // 兼容旧脚本直接把整段 JSON 打到 stdout 的 echarts= 写法
+            String echarts_data = "";
+            String echartsFile = extractSentinel(pr.output, "echarts_file=");
+            if (!echartsFile.isEmpty()) {
+                try {
+                    File ef = new File(echartsFile.trim());
+                    echarts_data = new String(Files.readAllBytes(ef.toPath()), StandardCharsets.UTF_8);
+                    ef.delete(); // 读取后清理临时文件
+                } catch (Exception e) {
+                    System.err.println("[seismic] 读取 echarts 文件失败: " + e.getMessage());
+                }
+            }
+            if (echarts_data.isEmpty()) {
+                echarts_data = extractSentinel(pr.output, "echarts=");
+            }
             if (outputJson.isEmpty()) {
-                return ResponseEntity.internalServerError().body("No result from Python");
+                return ResponseEntity.internalServerError()
+                        .body("No result from Python: " + tail(pr.output, 800));
             }
 
             boolean detected = outputJson.contains("\"detected\": true");
