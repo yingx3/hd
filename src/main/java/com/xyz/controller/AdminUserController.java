@@ -90,7 +90,7 @@ public class AdminUserController {
     private String avaflowSourceCrs;
     @Value("${app.avaflow.grass-gisdbase:/home/wm/grassdata/demo1/PERMANENT}")
     private String avaflowGrassGisdbase;
-    @Value("${app.avaflow.timeout:1800}")
+    @Value("${app.avaflow.timeout:3600}")
     private long avaflowTimeoutSeconds;
 
     @Value("${app.avaflow.phases:3}")
