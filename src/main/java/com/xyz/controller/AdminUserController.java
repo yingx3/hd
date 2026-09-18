@@ -1290,6 +1290,30 @@ public class AdminUserController {
 
         String area = str(body, "area");
 
+        // 前端可选：时间步长 / 模拟时长（秒，来自用户输入）。
+        // 不传时沿用配置 app.avaflow.time（默认 10,200），保证老前端与历史任务仍可运行。
+        Double frontTimeStep = optNum(body, "timeStep", null);
+        Double frontDuration = optNum(body, "duration", null);
+        String timeOverride = null;
+        if (frontTimeStep != null || frontDuration != null) {
+            double step = frontTimeStep == null ? 10.0 : frontTimeStep;
+            double duration = frontDuration == null ? 200.0 : frontDuration;
+            if (!(step > 0) || !(duration > 0) || Double.isNaN(step) || Double.isNaN(duration)) {
+                return ResponseEntity.badRequest().body("\u65f6\u95f4\u6b65\u957f\u4e0e\u6a21\u62df\u65f6\u957f\u5fc5\u987b\u5927\u4e8e 0");
+            }
+            if (step > 3600) {
+                return ResponseEntity.badRequest().body("\u65f6\u95f4\u6b65\u957f\u8fc7\u5927\uff08\u5efa\u8bae 1~60 \u79d2\uff09");
+            }
+            if (duration < step) {
+                return ResponseEntity.badRequest().body("\u6a21\u62df\u65f6\u957f\u4e0d\u80fd\u5c0f\u4e8e\u65f6\u95f4\u6b65\u957f");
+            }
+            if (duration > 30 * 24 * 3600) {
+                return ResponseEntity.badRequest().body("\u6a21\u62df\u65f6\u957f\u8fc7\u5927\uff08\u4e0a\u9650 30 \u5929\uff09");
+            }
+            timeOverride = formatTimeNumber(step) + "," + formatTimeNumber(duration);
+        }
+        final String timeParams = timeOverride;
+
         // 沿程调控：前端手绘范围 + 加高值，先抬高 elevation 栅格再交给 r.avaflow 计算
         Object terrainEditsRaw = body.get("terrainEdits");
         final boolean hasTerrainEdits = (terrainEditsRaw instanceof Collection)
@@ -1366,7 +1390,7 @@ public class AdminUserController {
                 }
                 String scriptPathLinux = jobDirLinux + "/start_beta.sh";
                 String startScript = buildStartScript(prefix, area, jobDirLinux, jobId,
-                        elevationPathLinux, profileOverride);
+                        elevationPathLinux, profileOverride, timeParams);
                 File startFile = new File(jobDir, "start_beta.sh");
                 Files.write(startFile.toPath(), startScript.getBytes(StandardCharsets.UTF_8));
 
@@ -2497,6 +2521,14 @@ public class AdminUserController {
         return jobId;
     }
 
+    /** 时间参数格式化：10.0 -> 10，2.5 -> 2.5（写进脚本的 time 参数） */
+    private static String formatTimeNumber(double value) {
+        if (value == Math.rint(value) && Math.abs(value) < 1e15) {
+            return String.valueOf((long) value);
+        }
+        return String.valueOf(value);
+    }
+
     private String shellQuote(String value) {
         return "'" + (value == null ? "" : value.replace("'", "'\\''")) + "'";
     }
@@ -2727,7 +2759,8 @@ public class AdminUserController {
     }
 
     private String buildStartScript(String prefix, String area, String jobDirLinux, String jobId,
-                                    String elevationPathLinux, String profileOverride) {
+                                    String elevationPathLinux, String profileOverride,
+                                    String timeOverride) {
         String suffix = jobId.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
         String elevRaster = "beta_elev_" + suffix;
         String debrisRaster = "beta_debris_" + suffix;
@@ -2754,7 +2787,10 @@ public class AdminUserController {
         String profile = (profileOverride == null || profileOverride.isEmpty())
                 ? configuredProfile : profileOverride;
         String friction = env.getProperty("app.avaflow.friction", avaflowFriction);
-        String time = env.getProperty("app.avaflow.time", avaflowTime);
+        // 前端传了「时间步长,模拟时长」就用前端值，否则用配置默认值
+        String time = (timeOverride == null || timeOverride.isEmpty())
+                ? env.getProperty("app.avaflow.time", avaflowTime)
+                : timeOverride;
         String phases = env.getProperty("app.avaflow.phases", avaflowPhases);
         sb.append("r.avaflow.40G prefix=").append(prefix)
                 .append(" phases=").append(phases)
