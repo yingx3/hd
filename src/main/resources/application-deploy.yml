@@ -38,3 +38,17 @@ app:
     time: "10,200"
     expected-frames: 21
     profile: "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"
+  avaflow-alpha:
+    exe: E:/ZHLXT/算法/DepthAveraged2D_Windows_Sedongpu_Basic/DepthAveraged2D.exe
+    jobs-root: ""
+    static-dir: E:/ZHLXT/nginx-1.26.2/nginx-1.26.2/html
+    static-subdir: avaflow_alpha
+    source-crs: EPSG:32646
+    timeout: 3600
+    model: single-phase
+    terrain-mode: 3
+    source-mode: 2
+    source-depth: 2.8
+    source-update-mode: 1
+    mu-coulomb: 0.27
+    n-manning: 0.03

@@ -49,6 +49,25 @@ app:
     # profile.巴宜区: "..."
     # profile.波密县: "..."
 
+  # 冰川泥石流动力学模型_alpha / DepthAveraged2D（Windows 单相深度平均二维内核）
+  avaflow-alpha:
+    # 独立 EXE；留空时使用项目默认路径
+    exe: E:/Projects/ZHLXT/算法/DepthAveraged2D_Windows_Sedongpu_Basic/DepthAveraged2D.exe
+    # 留空即 <project-root>/suanfa/avaflow_alpha/jobs
+    jobs-root: ""
+    static-dir: E:/softwares/nginx-1.26.2/nginx-1.26.2/html
+    static-subdir: avaflow_alpha
+    source-crs: EPSG:32646
+    timeout: 3600
+    model: single-phase
+    # 方案 A：通用默认动力学参数，不在前端暴露
+    terrain-mode: 3
+    source-mode: 2
+    source-depth: 2.8
+    source-update-mode: 1
+    mu-coulomb: 0.27
+    n-manning: 0.03
+
   # 洪水泥石流启动动力学模型（Pro / suanfa/Pro/python_port 数值内核）
   pro:
     # 任务目录（输入栅格 / work / progress.json）；留空即 <project-root>/suanfa/Pro/jobs
