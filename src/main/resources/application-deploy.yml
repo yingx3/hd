@@ -23,21 +23,6 @@ app:
   conda-python-exe: C:/01_Zhang_king/miniconda3/envs/pytorch/python.exe
   inference-script: E:/ZHLXT/demo/src/assets/src/inference.py
   transformer-script: E:/ZHLXT/hd/hd-mao_0322/suanfa/dzd/scripts/transformer1d.py
-  avaflow:
-    # WSL 发行版名（启动 GRASS、检查 GRASS mapset 残留锁都用它）
-    wsl-distro: Ubuntu-20.04
-    wsl-home: //wsl.localhost/Ubuntu-20.04/home/wm
-    wsl-linux-home: /home/wm
-    jobs-root: //wsl.localhost/Ubuntu-20.04/home/wm/avaflow_jobs
-    source-crs: EPSG:32647
-    grass-gisdbase: /home/wm/grassdata/demo1/PERMANENT
-    static-dir: E:/ZHLXT/nginx-1.26.2/nginx-1.26.2/html
-    timeout: 7200
-    phases: 3
-    friction: "15,0,0,15,0,0,0,0,0.05"
-    time: "10,200"
-    expected-frames: 21
-    profile: "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"
   avaflow-alpha:
     exe: E:/ZHLXT/算法/DepthAveraged2D_Windows_Sedongpu_Basic/DepthAveraged2D.exe
     jobs-root: ""

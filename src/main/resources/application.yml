@@ -22,34 +22,7 @@ spring:
 #   python-exe: python/python.exe               # 嵌入式Python路径
 #   conda-python-exe: D:/application/miniconda3/envs/geocompy/python.exe  # DL模型Python
 
-# 洪水泥石流启动动力学模型_beta / r.avaflow(avaflow) 配置
 app:
-  avaflow:
-    # WSL 发行版名（启动 GRASS、检查 GRASS mapset 残留锁都用它）
-    wsl-distro: Ubuntu-20.04
-    # Windows 访问 WSL 的根目录（用正斜杠 UNC）
-    wsl-home: //wsl.localhost/Ubuntu-20.04/home/wm
-    # WSL 内路径（wsl 命令 cd 用）
-    wsl-linux-home: /home/wm
-    jobs-root: //wsl.localhost/Ubuntu-20.04/home/wm/avaflow_jobs
-    source-crs: EPSG:32647
-    # GRASS GIS location/mapset
-    grass-gisdbase: /home/wm/grassdata/demo1/PERMANENT
-    # ASC/GeoJSON 输出目录（nginx html 根，前端 /ng 可访问）
-    static-dir: E:/softwares/nginx-1.26.2/nginx-1.26.2/html
-    # 执行超时（秒）
-    timeout: 7200
-    # r.avaflow 参数（默认即 WSL start.sh 的 BH02 实验参数）
-    phases: 3
-    friction: "15,0,0,15,0,0,0,0,0.05"
-    time: "10,200"
-    expected-frames: 21
-    # 默认滑移路径 profile；按区域配置：在同级写 profile.巴宜区 / profile.波密县
-    profile: "159256,3319753,158535,3318924,158097,3318218,157556,3317198,157084,3316176,156786,3315547,156579,3314835"
-    # profile.巴宜区: "..."
-    # profile.波密县: "..."
-
-  # 冰川泥石流动力学模型_alpha / DepthAveraged2D（Windows 单相深度平均二维内核）
   avaflow-alpha:
     # 独立 EXE；留空时使用项目默认路径
     exe: E:/Projects/ZHLXT/算法/DepthAveraged2D_Windows_Sedongpu_Basic/DepthAveraged2D.exe

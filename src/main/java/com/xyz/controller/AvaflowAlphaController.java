@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * 冰川泥石流动力学模型_alpha。
  *
- * 该链路独立于现有 r.avaflow beta：输入 z.asc / h.asc，直接调用
+ * 该链路输入 z.asc / h.asc，直接调用
  * DepthAveraged2D.exe，并把输出 h_######.asc 发布为前端可播放的静态帧。
  */
 @RestController
@@ -56,7 +56,7 @@ public class AvaflowAlphaController {
     @Value("${app.avaflow-alpha.jobs-root:}")
     private String alphaJobsRoot;
 
-    @Value("${app.avaflow-alpha.static-dir:${app.avaflow.static-dir:E:/softwares/nginx-1.26.2/nginx-1.26.2/html}}")
+    @Value("${app.avaflow-alpha.static-dir:E:/softwares/nginx-1.26.2/nginx-1.26.2/html}")
     private String alphaStaticDir;
 
     @Value("${app.avaflow-alpha.static-subdir:avaflow_alpha}")
