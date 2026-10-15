@@ -38,6 +38,7 @@ import numpy as np
 # 工程措施强度换算系数（后端内部使用，不向前端暴露）：
 # 前端界面填的是"加高值"示意值，实际作用于高程栅格时放大该倍数。
 RAISE_SCALE = 50.0
+MAX_CUT_DEPTH = 200.0
 
 
 def _resolve_proj_data():
@@ -549,20 +550,23 @@ def load_terrain_edits(path):
         if len(pts) < 3:
             continue
         try:
-            raise_m = float(item.get("raise", 0.0))
+            edit_type = str(item.get("type") or "barrier").strip().lower()
+            if edit_type in ("notch", "cut", "slot", "开槽"):
+                depth = float(item.get("depth", item.get("raise", 0.0)))
+                edits.append({"type": "notch", "polygon": pts, "depth": depth})
+            else:
+                height = float(item.get("height", item.get("raise", 0.0)))
+                edits.append({"type": "barrier", "polygon": pts, "height": height})
         except (TypeError, ValueError):
             continue
-        edits.append({"polygon": pts, "raise": raise_m})
     return edits
 
 
 def apply_terrain_edits(arrays, grid, edits, masks_out=None):
-    """把封闭多边形内的地形整体抬高 raise 米（工程措施：拦挡坝 / 固床护底 / 导流堤）。
+    """Apply barrier raises and notch cuts to the terrain.
 
-    底床 g.z 取的是 zL，所以抬高 zL 才是「筑起障碍、让流翻过去」；
-    多边形内的 zB 同步抬高同样的幅度，保留原有物源厚度 zB - zL：
-    既不凭空删掉坝址处的物源（否则下游变弱是「少了物源」而不是「被坝挡住」），
-    也保证厚度不会变成负值污染求解器（见 solver.Init）。
+    barrier: raise zL and zB together to create a check dam.
+    notch: lower zL and zB together to cut a channel/slot; hS = zB-zL stays unchanged.
     """
     if not edits:
         return []
@@ -581,8 +585,14 @@ def apply_terrain_edits(arrays, grid, edits, masks_out=None):
     zl = arrays["zl"]
     transform = rio_transform.Affine(*grid["transform"])
     out_shape = (int(grid["nrows"]), int(grid["ncols"]))
+    bed_floor = float(np.nanmin(zl)) - MAX_CUT_DEPTH if np.size(zl) else -MAX_CUT_DEPTH
     applied = []
-    for idx, edit in enumerate(edits, 1):
+
+    # 先加拦挡，再开槽：开槽落在拦挡范围内时，相当于在坝体上开缺口
+    ordered = list(edits)
+    ordered.sort(key=lambda item: 0 if str(item.get("type", "barrier")).strip().lower() != "notch" else 1)
+
+    for idx, edit in enumerate(ordered, 1):
         geom = {"type": "Polygon",
                 "coordinates": [[[float(x), float(y)] for (x, y) in edit["polygon"]]]}
         try:
@@ -598,26 +608,42 @@ def apply_terrain_edits(arrays, grid, edits, masks_out=None):
         if n == 0:
             log("地形调控 #%d: 多边形不在计算网格范围内，已忽略" % idx)
             continue
-        raise_m = float(edit["raise"])
-        if not np.isfinite(raise_m) or raise_m <= 0.0:
-            log("地形调控 #%d: 加高值 %.3f 非正数，已忽略" % (idx, raise_m))
-            continue
-        # 实际作用于地形的高程增量（含后端换算系数，回传前端的仍是前端输入值）
-        effective_m = raise_m * RAISE_SCALE
-        # 抬高底床（zL）形成拦挡坝；zB 同步抬高相同幅度，保留原有物源厚度，
-        # 避免多边形内的物源被凭空删除（那样下游变弱只是因为少了物源）。
-        with np.errstate(invalid="ignore"):
-            hs_keep = np.where(np.isfinite(zb[mask] - zl[mask]), zb[mask] - zl[mask], 0.0)
-        hs_keep = np.maximum(hs_keep, 0.0)
-        zl[mask] = zl[mask] + effective_m
-        zb[mask] = zl[mask] + hs_keep
-        source_cells = int(np.count_nonzero(hs_keep > 1e-6))
         try:
             ring = [[round(float(x), 7), round(float(y), 7)]
                     for (x, y) in edit.get("polygon") or []]
         except (TypeError, ValueError):
             ring = []
-        applied.append({"index": idx, "raise": round(raise_m, 3), "cells": n,
+
+        with np.errstate(invalid="ignore"):
+            hs_keep = np.where(np.isfinite(zb[mask] - zl[mask]), zb[mask] - zl[mask], 0.0)
+        hs_keep = np.maximum(hs_keep, 0.0)
+        source_cells = int(np.count_nonzero(hs_keep > 1e-6))
+
+        edit_type = str(edit.get("type", "barrier")).strip().lower()
+        if edit_type == "notch":
+            depth = float(edit.get("depth", edit.get("raise", 0.0)))
+            if not np.isfinite(depth) or depth <= 0.0:
+                log("地形调控 #%d: 开槽深度 %.3f 非正数，已忽略" % (idx, depth))
+                continue
+            effective_m = min(depth, MAX_CUT_DEPTH)
+            zl[mask] = np.maximum(zl[mask] - effective_m, bed_floor)
+            zb[mask] = zl[mask] + hs_keep
+            applied.append({"index": idx, "type": "notch", "depth": round(depth, 3),
+                            "effectiveDepth": round(effective_m, 3), "cells": n,
+                            "sourceCells": source_cells, "polygon": ring})
+            log("地形调控 #%d: 开槽下切 %.3fm，影响 %d 个网格（%.2f km2，其中 %d 格原有物源同步下调）"
+                % (idx, effective_m, n, n * grid["dx"] * grid["dy"] / 1e6, source_cells))
+            continue
+
+        height = float(edit.get("height", edit.get("raise", 0.0)))
+        if not np.isfinite(height) or height <= 0.0:
+            log("地形调控 #%d: 加高值 %.3f 非正数，已忽略" % (idx, height))
+            continue
+        effective_m = height * RAISE_SCALE
+        zl[mask] = zl[mask] + effective_m
+        zb[mask] = zl[mask] + hs_keep
+        applied.append({"index": idx, "type": "barrier", "height": round(height, 3),
+                        "raise": round(height, 3), "cells": n,
                         "sourceCells": source_cells, "polygon": ring})
         if masks_out is not None:
             masks_out.append(mask)
@@ -629,7 +655,6 @@ def apply_terrain_edits(arrays, grid, edits, masks_out=None):
         log("地形调控后 物源厚度 zB-zL: min=%.3f max=%.3f（应 >= 0）"
             % (float(np.min(hS)), float(np.max(hS))))
     return applied
-
 
 def apply_depth_thinning(arrays, scale=1.0, cap=0.0):
     """按比例 / 上限削薄物源层（泥石流层）厚度。

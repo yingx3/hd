@@ -172,27 +172,34 @@ public class AvaflowAlphaController {
         }
 
         Object barrierEditsRaw = body.get("barrierEdits");
-        final boolean hasBarrier = barrierEditsRaw instanceof Collection
-                && !((Collection<?>) barrierEditsRaw).isEmpty();
+        final List<Map<String, Object>> terrainEdits = toMapList(barrierEditsRaw);
+        final boolean hasTerrainEdits = !terrainEdits.isEmpty();
         final File barrierFile = new File(inputDir, "barrier.asc");
-        final AvaflowAlphaBarrierWriter.Result barrierStats;
-        if (hasBarrier) {
+        AvaflowAlphaBarrierWriter.Result barrierStats = null;
+        AvaflowAlphaBarrierWriter.Result notchStats = null;
+        boolean hasBarrier = false;
+        boolean hasNotch = false;
+        if (hasTerrainEdits) {
             try {
                 barrierStats = AvaflowAlphaBarrierWriter.write(
                         new File(inputDir, "z.asc"),
                         barrierFile,
-                        toMapList(barrierEditsRaw),
+                        terrainEdits,
                         alphaSourceCrs);
-                if (barrierStats.cells <= 0) {
-                    return ResponseEntity.badRequest().body("手绘拦挡范围没有覆盖任何有效栅格");
+                notchStats = AvaflowAlphaBarrierWriter.applyNotches(
+                        new File(inputDir, "z.asc"),
+                        terrainEdits,
+                        alphaSourceCrs);
+                hasBarrier = barrierStats.hasBarrier();
+                hasNotch = notchStats.hasNotch();
+                if (!hasBarrier && !hasNotch) {
+                    return ResponseEntity.badRequest().body("手绘范围没有覆盖任何有效栅格");
                 }
             } catch (IllegalArgumentException e) {
                 return ResponseEntity.badRequest().body(e.getMessage());
             } catch (Exception e) {
-                return ResponseEntity.internalServerError().body("barrier.asc 生成失败: " + e.getMessage());
+                return ResponseEntity.internalServerError().body("地形调控文件生成失败: " + e.getMessage());
             }
-        } else {
-            barrierStats = null;
         }
 
         File resultDir = new File(jobDir, "results");
@@ -217,13 +224,22 @@ public class AvaflowAlphaController {
         job.put("duration", duration);
         if (hasBarrier) {
             job.put("barrierEdited", true);
-            job.put("barrierCells", barrierStats.cells);
-            job.put("barrierHeight", barrierStats.maxHeight);
+            job.put("barrierCells", barrierStats.barrierCells);
+            job.put("barrierHeight", barrierStats.maxBarrierHeight);
+        }
+        if (hasNotch) {
+            job.put("notchEdited", true);
+            job.put("notchCells", notchStats.notchCells);
+            job.put("notchDepth", notchStats.maxNotchDepth);
+        }
+        if (hasTerrainEdits) {
+            job.put("terrainEdited", true);
             job.put("terrainEdits", barrierEditsRaw);
         }
         ALPHA_JOBS.put(jobId, job);
 
-        new Thread(() -> runAlphaJob(job, exe, paramsFile, inputDir, resultDir, barrierFile, hasBarrier),
+        final boolean barrierEnabled = hasBarrier;
+        new Thread(() -> runAlphaJob(job, exe, paramsFile, inputDir, resultDir, barrierFile, barrierEnabled),
                 "avaflow-alpha-" + jobId).start();
 
         Map<String, Object> response = new LinkedHashMap<>();
@@ -340,13 +356,23 @@ public class AvaflowAlphaController {
                 return;
             }
 
-            if (hasBarrier && result.get("meta") instanceof Map) {
+            boolean hasTerrainEdits = Boolean.TRUE.equals(job.get("terrainEdited"));
+            boolean hasNotch = Boolean.TRUE.equals(job.get("notchEdited"));
+            if (hasTerrainEdits && result.get("meta") instanceof Map) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> meta = (Map<String, Object>) result.get("meta");
-                meta.put("barrierEdited", true);
-                meta.put("barrierCells", job.get("barrierCells"));
-                meta.put("barrierHeight", job.get("barrierHeight"));
+                meta.put("terrainEdited", true);
                 meta.put("terrainEdits", job.get("terrainEdits"));
+                if (hasBarrier) {
+                    meta.put("barrierEdited", true);
+                    meta.put("barrierCells", job.get("barrierCells"));
+                    meta.put("barrierHeight", job.get("barrierHeight"));
+                }
+                if (hasNotch) {
+                    meta.put("notchEdited", true);
+                    meta.put("notchCells", job.get("notchCells"));
+                    meta.put("notchDepth", job.get("notchDepth"));
+                }
             }
             job.putAll(result);
             job.put("frames", frameCount);
@@ -377,6 +403,12 @@ public class AvaflowAlphaController {
             if (Boolean.TRUE.equals(job.get("barrierEdited"))) {
                 history.put("barrierCells", job.get("barrierCells"));
                 history.put("barrierHeight", job.get("barrierHeight"));
+                history.put("terrainEdits", job.get("terrainEdits"));
+            }
+            history.put("notchEdited", Boolean.TRUE.equals(job.get("notchEdited")));
+            if (Boolean.TRUE.equals(job.get("notchEdited"))) {
+                history.put("notchCells", job.get("notchCells"));
+                history.put("notchDepth", job.get("notchDepth"));
                 history.put("terrainEdits", job.get("terrainEdits"));
             }
             history.put("meta", result.get("meta"));
@@ -460,6 +492,7 @@ public class AvaflowAlphaController {
             history.put("createdAtEpoch", createdEpochOf(jobId, jobDir));
             history.put("frameCount", frameCount);
             history.put("barrierEdited", false);
+            history.put("notchEdited", false);
             history.put("meta", meta);
             try {
                 OBJECT_MAPPER.writeValue(historyFile, history);
@@ -471,11 +504,20 @@ public class AvaflowAlphaController {
 
         boolean barrierEdited = Boolean.TRUE.equals(history.get("barrierEdited"))
                 || Boolean.TRUE.equals(meta.get("barrierEdited"));
+        boolean notchEdited = Boolean.TRUE.equals(history.get("notchEdited"))
+                || Boolean.TRUE.equals(meta.get("notchEdited"));
         if (barrierEdited) {
             meta.put("barrierEdited", true);
             meta.put("barrierCells", history.get("barrierCells"));
             meta.put("barrierHeight", history.get("barrierHeight"));
             meta.put("terrainEdits", history.get("terrainEdits"));
+        }
+        if (notchEdited) {
+            meta.put("notchEdited", true);
+            meta.put("notchCells", history.get("notchCells"));
+            meta.put("notchDepth", history.get("notchDepth"));
+            meta.put("terrainEdits", history.get("terrainEdits") != null
+                    ? history.get("terrainEdits") : meta.get("terrainEdits"));
         }
 
         List<String> frameFiles = new ArrayList<>();
@@ -505,9 +547,12 @@ public class AvaflowAlphaController {
         item.put("barrierEdited", barrierEdited);
         item.put("barrierCells", history.get("barrierCells"));
         item.put("barrierHeight", history.get("barrierHeight"));
+        item.put("notchEdited", notchEdited);
+        item.put("notchCells", history.get("notchCells"));
+        item.put("notchDepth", history.get("notchDepth"));
         item.put("timeStep", history.get("timeStep"));
         item.put("duration", history.get("duration"));
-        item.put("terrainEdited", barrierEdited);
+        item.put("terrainEdited", barrierEdited || notchEdited);
         item.put("bbox", meta.get("bbox"));
         item.put("meta", meta);
         item.put("result", result);
