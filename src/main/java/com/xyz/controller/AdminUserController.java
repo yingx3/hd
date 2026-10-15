@@ -1492,6 +1492,9 @@ public class AdminUserController {
         }
         String requestedCrs = str(body, "sourceCrs");
         final String inputSourceCrs = requestedCrs.isEmpty() ? proSourceCrs : requestedCrs;
+        String requestedName = str(body, "name");
+        final String simulationName = requestedName.length() > 60
+                ? requestedName.substring(0, 60) : requestedName;
 
         @SuppressWarnings("unchecked")
         Map<String, Object> params = (body.get("params") instanceof Map)
@@ -1553,6 +1556,7 @@ public class AdminUserController {
 
         Map<String, Object> job = new java.util.concurrent.ConcurrentHashMap<>();
         job.put("jobId", jobId);
+        job.put("name", simulationName);
         job.put("prefix", prefix);
         job.put("status", "running");
         job.put("phase", "simulation");
@@ -1590,6 +1594,10 @@ public class AdminUserController {
                         "--depth-cap", String.valueOf(depthCap),
                         "--max-frames", String.valueOf(maxFrames),
                         "--field", fieldArg));
+                if (!simulationName.trim().isEmpty()) {
+                    cmd.add("--name");
+                    cmd.add(simulationName.trim());
+                }
                 if (!targetCrs.isEmpty()) {
                     cmd.add("--target-crs");
                     cmd.add(targetCrs);
@@ -1772,6 +1780,7 @@ public class AdminUserController {
                 item.put("createdAtText", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
                         .format(new java.util.Date(createdEpoch)));
                 item.put("field", pythonMeta.get("field"));
+                item.put("name", pythonMeta.get("name"));
                 item.put("tmax", pythonMeta.get("tmax"));
                 item.put("interval", pythonMeta.get("interval"));
                 item.put("globalMax", pythonMeta.get("globalMax"));

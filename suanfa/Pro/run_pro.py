@@ -849,7 +849,7 @@ def run_simulation(job_dir, args):
     if getattr(args, "prepare_only", False):
         log("--prepare-only：仅写出 work/ 输入与参数，跳过数值计算")
         return {
-            "model": "pro", "prepareOnly": True, "frameCount": 0,
+            "model": "pro", "prepareOnly": True, "frameCount": 0, "name": args.name,
             "ncols": grid["ncols"], "nrows": grid["nrows"],
             "cellsize": grid["dx"], "dlat": grid["dy"],
             "xllcorner": grid["xll"], "yllcorner": grid["yll"],
@@ -963,6 +963,7 @@ def run_simulation(job_dir, args):
 
     meta = {
         "model": "pro",
+        "name": args.name,
         "field": args.field,
         "prefix": args.prefix,
         "ncols": grid["ncols"],
@@ -1048,6 +1049,7 @@ def parse_args(argv):
     parser.add_argument("--job-dir", required=True)
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--input-dir", default="", help="输入数据目录（默认 <job-dir>/inputs）")
+    parser.add_argument("--name", default="", help="模拟名称")
     parser.add_argument("--source-crs", default="", help="asc/txt 输入的坐标系，如 EPSG:32647")
     parser.add_argument("--anchor-lon", type=float, default=None,
                         help="无地理头部 txt/asc 的源区中心经度（WGS84，如易贡 95.0020）")

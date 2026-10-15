@@ -151,6 +151,9 @@ public class AvaflowAlphaController {
         Double durationValue = optNum(body, "duration");
         double timeStep = timeStepValue == null ? 10.0 : timeStepValue;
         double duration = durationValue == null ? 200.0 : durationValue;
+        String requestedName = str(body, "name");
+        final String simulationName = requestedName.length() > 60
+                ? requestedName.substring(0, 60) : requestedName;
 
         String timeError = validateTime(timeStep, duration);
         if (timeError != null) {
@@ -213,6 +216,7 @@ public class AvaflowAlphaController {
 
         Map<String, Object> job = new ConcurrentHashMap<>();
         job.put("jobId", jobId);
+        job.put("name", simulationName);
         job.put("status", "running");
         job.put("phase", "simulation");
         job.put("progress", 0);
@@ -394,6 +398,7 @@ public class AvaflowAlphaController {
         try {
             Map<String, Object> history = new LinkedHashMap<>();
             history.put("jobId", jobId);
+            history.put("name", job.get("name"));
             history.put("model", "avaflow_alpha");
             history.put("createdAtEpoch", job.getOrDefault("startedAt", System.currentTimeMillis()));
             history.put("frameCount", result.get("frameCount"));
@@ -539,6 +544,7 @@ public class AvaflowAlphaController {
                 : createdEpochOf(jobId, jobDir);
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("jobId", jobId);
+        item.put("name", history.get("name") != null ? history.get("name") : meta.get("name"));
         item.put("createdAtEpoch", createdEpoch);
         item.put("createdAtText", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
                 .format(new java.util.Date(createdEpoch)));
