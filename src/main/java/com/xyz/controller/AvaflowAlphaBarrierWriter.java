@@ -41,11 +41,19 @@ final class AvaflowAlphaBarrierWriter {
         final int notchCells;
         final double maxNotchDepth;
 
+        // 兼容旧版 AvaflowAlphaController（增量编译/热更新时可能仍引用旧字段名）
+        @Deprecated
+        final int cells;
+        @Deprecated
+        final double maxHeight;
+
         Result(int barrierCells, double maxBarrierHeight, int notchCells, double maxNotchDepth) {
             this.barrierCells = barrierCells;
             this.maxBarrierHeight = maxBarrierHeight;
             this.notchCells = notchCells;
             this.maxNotchDepth = maxNotchDepth;
+            this.cells = barrierCells;
+            this.maxHeight = maxBarrierHeight;
         }
 
         boolean hasBarrier() {
