@@ -2187,7 +2187,6 @@ public class AdminUserController {
             resp.put("sdpRunId", runId);
             resp.put("name", name == null ? "" : name);
             resp.put("sourceCrs", alphaSourceCrs);
-            resp.put("sourceThicknessRatio", 100);
             resp.put("stats", stats);
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
