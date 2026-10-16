@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import io, sys, os, json, base64
 
 def _resolve_proj_data():
@@ -89,6 +89,25 @@ def _warp_to_wgs84(band, src):
     bounds = (left, top + transform[4] * height, left + transform[0] * width, top)
     return dst, bounds
 
+def _native_stats(tif_path):
+    """按源栅格（未重投影）统计物源厚度，volume 用像元面积还原为体积(m^3)。"""
+    with rasterio.open(tif_path) as src:
+        band = src.read(1).astype(np.float64)
+        if src.nodata is not None:
+            band = np.where(band == src.nodata, np.nan, band)
+        valid = band[np.isfinite(band)]
+        transform = src.transform
+        pixel_area = abs(transform[0] * transform[4])
+        cellsize = pixel_area ** 0.5 if pixel_area > 0 else 0.0
+        return {
+            "max": float(np.max(valid)) if valid.size else 0.0,
+            "mean": float(np.mean(valid)) if valid.size else 0.0,
+            "sum": float(np.sum(valid)) if valid.size else 0.0,
+            "volume": float(np.sum(valid) * pixel_area) if valid.size else 0.0,
+            "cells": int(valid.size),
+            "cellsize": float(cellsize),
+        }
+
 def _warp_band(tif_path):
     with rasterio.open(tif_path) as src:
         band = src.read(1).astype(np.float64)
@@ -97,7 +116,7 @@ def _warp_band(tif_path):
         band, bounds = _warp_to_wgs84(band, src)
         return band, bounds
 
-def _render_frame(band, bounds, vmin, vmax):
+def _render_frame(band, bounds, vmin, vmax, stats=None):
     norm = np.clip((band - vmin) / (vmax - vmin), 0, 1)
     norm = np.where(np.isnan(norm), 0.0, norm)
 
@@ -128,6 +147,14 @@ def _render_frame(band, bounds, vmin, vmax):
     img.save(buf, format="PNG")
     png_base64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
+    if stats is None:
+        valid = band[np.isfinite(band)]
+        stats = {
+            "max": float(np.max(valid)) if valid.size else 0.0,
+            "mean": float(np.mean(valid)) if valid.size else 0.0,
+            "sum": float(np.sum(valid)) if valid.size else 0.0,
+            "cells": int(np.count_nonzero(np.isfinite(band))),
+        }
     return {
         "west": round(bounds[0], 6),
         "south": round(bounds[1], 6),
@@ -139,6 +166,7 @@ def _render_frame(band, bounds, vmin, vmax):
         "width": w,
         "height": h,
         "valueRange": [round(float(vmin), 4), round(float(vmax), 4)],
+        "stats": stats,
     }
 
 if __name__ == "__main__":
@@ -148,6 +176,7 @@ if __name__ == "__main__":
         sys.exit(1)
     # 一次性读取所有帧
     loaded = [_warp_band(p) for p in paths]
+    native_stats = [_native_stats(p) for p in paths]
     # 全局色阶：所有帧统一 [2,98] 百分位，使帧间真实差异在颜色上可见
     all_valid = np.concatenate([b[~np.isnan(b)] for b, _ in loaded])
     if all_valid.size:
@@ -156,5 +185,5 @@ if __name__ == "__main__":
             vmax = vmin + 1e-9
     else:
         vmin, vmax = 0, 1
-    frames = [_render_frame(b, bounds, vmin, vmax) for b, bounds in loaded]
+    frames = [_render_frame(b, bounds, vmin, vmax, st) for (b, bounds), st in zip(loaded, native_stats)]
     print("RESULT_JSON=" + json.dumps(frames, ensure_ascii=False))

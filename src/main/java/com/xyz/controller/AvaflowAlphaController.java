@@ -27,7 +27,9 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -116,6 +118,13 @@ public class AvaflowAlphaController {
                 }
                 File target = new File(inputDir, lower);
                 file.transferTo(target);
+                if ("h.asc".equals(lower)) {
+                    // 重新上传物源厚度时清掉上一次的削薄基准备份，避免基准过期
+                    File backup = new File(inputDir, "h.original.asc");
+                    if (backup.isFile()) {
+                        Files.deleteIfExists(backup.toPath());
+                    }
+                }
             }
 
             for (String name : Arrays.asList("z.asc", "h.asc")) {
@@ -160,12 +169,27 @@ public class AvaflowAlphaController {
             return ResponseEntity.badRequest().body(timeError);
         }
 
+        // 物源厚度比例（%）：按比例削薄初始物源 h.asc，100 = 不削薄
+        Double ratioValue = optNum(body, "sourceThicknessRatio");
+        double sourceThicknessRatio = ratioValue == null ? 100.0 : ratioValue;
+        if (Double.isNaN(sourceThicknessRatio) || sourceThicknessRatio <= 0 || sourceThicknessRatio > 100.0) {
+            return ResponseEntity.badRequest().body("物源厚度比例需在 (0, 100] 之间");
+        }
+
         File jobDir = alphaJobDir(jobId);
         File inputDir = new File(jobDir, "input");
         for (String name : Arrays.asList("z.asc", "h.asc")) {
             File target = new File(inputDir, name);
             if (!target.isFile() || target.length() == 0) {
                 return ResponseEntity.badRequest().body("任务输入不完整: " + name);
+            }
+        }
+
+        if (Math.abs(sourceThicknessRatio - 100.0) > 1e-9) {
+            try {
+                applySourceThicknessRatio(inputDir, sourceThicknessRatio);
+            } catch (IOException e) {
+                return ResponseEntity.internalServerError().body("物源厚度比例处理失败: " + e.getMessage());
             }
         }
 
@@ -226,6 +250,7 @@ public class AvaflowAlphaController {
         job.put("startedAt", System.currentTimeMillis());
         job.put("timeStep", timeStep);
         job.put("duration", duration);
+        job.put("sourceThicknessRatio", sourceThicknessRatio);
         if (hasBarrier) {
             job.put("barrierEdited", true);
             job.put("barrierCells", barrierStats.barrierCells);
@@ -360,6 +385,12 @@ public class AvaflowAlphaController {
                 return;
             }
 
+            if (result.get("meta") instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> ratioMeta = (Map<String, Object>) result.get("meta");
+                ratioMeta.put("sourceThicknessRatio", job.get("sourceThicknessRatio"));
+            }
+
             boolean hasTerrainEdits = Boolean.TRUE.equals(job.get("terrainEdited"));
             boolean hasNotch = Boolean.TRUE.equals(job.get("notchEdited"));
             if (hasTerrainEdits && result.get("meta") instanceof Map) {
@@ -404,6 +435,7 @@ public class AvaflowAlphaController {
             history.put("frameCount", result.get("frameCount"));
             history.put("timeStep", job.get("timeStep"));
             history.put("duration", job.get("duration"));
+            history.put("sourceThicknessRatio", job.get("sourceThicknessRatio"));
             history.put("barrierEdited", Boolean.TRUE.equals(job.get("barrierEdited")));
             if (Boolean.TRUE.equals(job.get("barrierEdited"))) {
                 history.put("barrierCells", job.get("barrierCells"));
@@ -665,6 +697,70 @@ public class AvaflowAlphaController {
                 "output_dataframe=0",
                 "output_vtu=0");
         Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
+    }
+
+    /** ASC 头关键字，用于识别栅格数据起始行。 */
+    private static final Set<String> ASC_HEADER_KEYS = new HashSet<>(Arrays.asList(
+            "ncols", "nrows", "xllcorner", "yllcorner", "xllcenter", "yllcenter",
+            "cellsize", "nodata_value"));
+
+    /**
+     * 按物源厚度比例（%）削薄物源厚度 h.asc：
+     * 第一次调用时把原始 h.asc 备份为 h.original.asc，之后每次都基于备份重新缩放，
+     * 保证多次运行（或改比例重跑）结果一致。
+     */
+    private static void applySourceThicknessRatio(File inputDir, double percent) throws IOException {
+        File hAsc = new File(inputDir, "h.asc");
+        File backup = new File(inputDir, "h.original.asc");
+        if (!backup.isFile()) {
+            Files.copy(hAsc.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+        double ratio = percent / 100.0;
+        List<String> lines = Files.readAllLines(backup.toPath(), StandardCharsets.UTF_8);
+        List<String> out = new ArrayList<>(lines.size());
+        boolean headerDone = false;
+        Double nodata = null;
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!headerDone) {
+                String key = trimmed.isEmpty() ? "" : trimmed.split("\\s+")[0].toLowerCase(Locale.ROOT);
+                if (ASC_HEADER_KEYS.contains(key)) {
+                    if (trimmed.split("\\s+").length > 1 && "nodata_value".equals(key)) {
+                        nodata = parseAscDouble(trimmed.split("\\s+")[1]);
+                    }
+                    out.add(line);
+                    continue;
+                }
+                headerDone = true;
+            }
+            if (trimmed.isEmpty()) {
+                out.add(line);
+                continue;
+            }
+            String[] parts = trimmed.split("\\s+");
+            StringBuilder sb = new StringBuilder(trimmed.length());
+            for (int i = 0; i < parts.length; i++) {
+                if (i > 0) {
+                    sb.append(' ');
+                }
+                Double v = parseAscDouble(parts[i]);
+                if (v == null || v <= 0 || (nodata != null && Math.abs(v - nodata) < 1e-6)) {
+                    sb.append(parts[i]);
+                } else {
+                    sb.append(formatNumber(v * ratio));
+                }
+            }
+            out.add(sb.toString());
+        }
+        Files.write(hAsc.toPath(), out, StandardCharsets.UTF_8);
+    }
+
+    private static Double parseAscDouble(String text) {
+        try {
+            return Double.parseDouble(text);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private File alphaJobDir(String jobId) {

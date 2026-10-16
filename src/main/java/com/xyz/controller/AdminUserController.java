@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 
 
 import javax.imageio.ImageIO;
@@ -76,6 +77,19 @@ public class AdminUserController {
     private String transformerScript;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    /** 冰川泥石流动力学模型（DepthAveraged2D）网格坐标系，用于把 SDP 结果重投影对齐。 */
+    @Value("${app.avaflow-alpha.source-crs:EPSG:32646}")
+    private String alphaSourceCrs = "EPSG:32646";
+
+    /** 冰川泥石流动力学模型任务根目录（默认 <projectRoot>/suanfa/avaflow_alpha/jobs）。 */
+    @Value("${app.avaflow-alpha.jobs-root:}")
+    private String alphaJobsRoot;
+
+    /** SDP 启动物源计算结果根目录（默认 <projectRoot>/data/SDP_Results）。 */
+    private File sdpResultsRootDir() {
+        return new File(projectRoot, "data/SDP_Results");
+    }
 
     @Value("${app.process-timeout:600}")
     private long processTimeoutSeconds;
@@ -1053,17 +1067,29 @@ public class AdminUserController {
 
         String rainPath = body.containsKey("rain_path") ? body.get("rain_path").toString() : projectRoot + "/suanfa/SDP_Start/rainfall_tif";
         String tempPath = body.containsKey("temp_path") ? body.get("temp_path").toString() : projectRoot + "/suanfa/SDP_Start/tem_tif";
-        String outputDir = body.containsKey("output_dir") ? body.get("output_dir").toString() : projectRoot + "/data/SDP_Results";
         double iceContent = body.containsKey("ice_content") ? Double.parseDouble(body.get("ice_content").toString()) : 0.2;
         double zmaxBoost = body.containsKey("zmax_boost") ? Double.parseDouble(body.get("zmax_boost").toString()) : 0.0;
         String tempPattern = body.containsKey("temp_pattern") ? body.get("temp_pattern").toString() : "temp_%d.tif";
+        String sdpName = str(body, "name");
+        if (sdpName.length() > 60) {
+            sdpName = sdpName.substring(0, 60);
+        }
+
+        // 每次运行独立目录，完整保留历史结果
+        String runId = newSdpRunId();
+        File outputDir = new File(sdpResultsRootDir(), runId);
+        try {
+            Files.createDirectories(outputDir.toPath());
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().body("创建 SDP 结果目录失败: " + e.getMessage());
+        }
 
         try {
             ProcessResult pr = runProcess(
                     Arrays.asList(pythonExe, pythonScript,
                             "--rain_path", rainPath,
                             "--temp_path", tempPath,
-                            "--output_dir", outputDir,
+                            "--output_dir", outputDir.getAbsolutePath(),
                             "--ice_content", String.valueOf(iceContent),
                             "--temp_pattern", tempPattern,
                             "--zmax_boost", String.valueOf(zmaxBoost)),
@@ -1072,30 +1098,12 @@ public class AdminUserController {
                 return ResponseEntity.internalServerError().body("run.py 执行失败，退出码：" + pr.exitCode);
             }
 
-            // 代表性时间节点序列（对应 ZMAX_t<time>.tif）
-            List<String> times = new ArrayList<>();
-            String timeLine = extractSentinel(pr.output, "TIME_NODES=");
-            if (!timeLine.isEmpty()) {
-                for (String s : timeLine.split(",")) {
-                    if (!s.trim().isEmpty()) {
-                        times.add(s.trim());
-                    }
-                }
-            }
-            if (times.isEmpty()) {
-                times.add("final"); // 兼容旧版：仅 ZMAX_final.tif
+            String tifPath = pickSdpZmaxFile(outputDir);
+            if (tifPath == null) {
+                return ResponseEntity.internalServerError().body("未找到 ZMAX 结果栅格: " + outputDir.getAbsolutePath());
             }
 
-            // 只取最后时间节点（最终状态，不做逐帧动画）
-            String tk = times.get(times.size() - 1);
-            String tifPath = "final".equals(tk)
-                    ? outputDir + "/ZMAX_final.tif"
-                    : outputDir + "/ZMAX_t" + tk + ".tif";
-            if (!new File(tifPath).exists()) {
-                return ResponseEntity.internalServerError().body("输出文件不存在: " + tifPath);
-            }
-
-            // 单次进程转换最终 tif
+            // 单次进程转换最终 tif（tif_to_json.py 内部统一转为 WGS84 边界 + PNG 预览）
             List<String> cmd = new ArrayList<>();
             cmd.add(pythonExe);
             cmd.add(convertScript);
@@ -1113,9 +1121,13 @@ public class AdminUserController {
                 return ResponseEntity.internalServerError().body("tif_to_json.py 未返回有效帧");
             }
 
-            // 返回最后一帧（单对象）
-            Map<String, Object> frame = buildFrame(rawFrames.get(rawFrames.size() - 1));
-            frame.put("time", "final".equals(tk) ? 0.0 : Double.parseDouble(tk));
+            Map<String, Object> rawFrame = rawFrames.get(rawFrames.size() - 1);
+            Map<String, Object> frame = buildFrame(rawFrame);
+            frame.put("runId", runId);
+            frame.put("name", sdpName);
+
+            // 落盘元数据：供 SDP 历史列表与动力学模型串联使用
+            writeSdpResultMeta(runId, outputDir, sdpName, frame, rawFrame, tifPath, body);
             return ResponseEntity.ok(frame);
 
         } catch (Exception e) {
@@ -1123,6 +1135,7 @@ public class AdminUserController {
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
     }
+
 
     @PostMapping("/avainit")
     public ResponseEntity<?> runAvainit(@RequestBody Map<String, Object> body) {
@@ -1903,6 +1916,287 @@ public class AdminUserController {
         }
         return jobId;
     }
+    // ==================== SDP 启动物源结果：历史列表与动力学模型串联 ====================
+
+    /** 从 SDP 结果目录挑选代表性 ZMAX 栅格（优先最终状态）。 */
+    private static String pickSdpZmaxFile(File dir) {
+        File finalTif = new File(dir, "ZMAX_final.tif");
+        if (finalTif.isFile() && finalTif.length() > 0) {
+            return finalTif.getAbsolutePath();
+        }
+        File[] tifs = dir.listFiles((d, n) -> n.matches("ZMAX_t\\d+\\.tif"));
+        if (tifs == null || tifs.length == 0) {
+            return null;
+        }
+        Arrays.sort(tifs, Comparator.comparingLong(File::lastModified));
+        return tifs[tifs.length - 1].getAbsolutePath();
+    }
+
+    private static String newSdpRunId() {
+        return "sdp_" + System.currentTimeMillis() + "_"
+                + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    }
+
+    private static String newAlphaJobIdForSdp() {
+        return "alpha_" + System.currentTimeMillis() + "_"
+                + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    }
+
+    private static String requireRunId(String value, String label) {
+        String runId = value == null ? "" : value.trim();
+        if (!runId.matches("[A-Za-z0-9_-]{1,96}")) {
+            throw new IllegalArgumentException("无效的" + label);
+        }
+        return runId;
+    }
+
+    private static long epochOf(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(value));
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    /** 冰川泥石流动力学模型任务目录，与 AvaflowAlphaController 保持一致。 */
+    private File alphaJobDir(String jobId) {
+        File root = alphaJobsRoot == null || alphaJobsRoot.trim().isEmpty()
+                ? new File(projectRoot, "suanfa/avaflow_alpha/jobs")
+                : new File(alphaJobsRoot.trim());
+        return new File(root, jobId);
+    }
+
+    /** 把 base64 预览图落盘为 PNG（兼容 data URL 前缀）。 */
+    private static void writeBase64Png(String base64, File out) throws IOException {
+        String data = base64 == null ? "" : base64;
+        int comma = data.indexOf(',');
+        if (comma >= 0) {
+            data = data.substring(comma + 1);
+        }
+        byte[] bytes = Base64.getDecoder().decode(data.trim());
+        Files.write(out.toPath(), bytes);
+    }
+
+    /** SDP 运行完成后写入 result_meta.json，作为历史列表与动力学模型串联的索引。 */
+    private void writeSdpResultMeta(String runId, File outputDir, String sdpName,
+                                    Map<String, Object> frame, Map<String, Object> rawFrame,
+                                    String zmaxPath, Map<String, Object> body) {
+        try {
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("runId", runId);
+            meta.put("name", sdpName);
+            meta.put("createdAt", System.currentTimeMillis());
+            meta.put("createdAtText", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+            meta.put("zmaxFile", new File(zmaxPath).getName());
+            if (body.containsKey("ice_content")) {
+                meta.put("iceContent", body.get("ice_content"));
+            }
+            if (body.containsKey("zmax_boost")) {
+                meta.put("zmaxBoost", body.get("zmax_boost"));
+            }
+            meta.put("stats", rawFrame.get("stats"));
+            meta.put("valueRange", frame.get("valueRange"));
+            meta.put("width", frame.get("width"));
+            meta.put("height", frame.get("height"));
+            meta.put("minLng", frame.get("minLng"));
+            meta.put("minLat", frame.get("minLat"));
+            meta.put("maxLng", frame.get("maxLng"));
+            meta.put("maxLat", frame.get("maxLat"));
+            meta.put("targetCrs", alphaSourceCrs);
+            Object preview = frame.get("imageBase64");
+            if (preview != null) {
+                writeBase64Png(preview.toString(), new File(outputDir, "preview.png"));
+                meta.put("preview", "preview.png");
+            }
+            // 记录本次 SDP 内部使用的 DEM，仅供追溯；动力学模型 z.asc 由用户上传
+            File dem = new File(projectRoot, "suanfa/SDP_Start/dem.tif");
+            if (dem.isFile()) {
+                Files.copy(dem.toPath(), new File(outputDir, "dem_used.tif").toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+                meta.put("demFile", "dem_used.tif");
+            }
+            OBJECT_MAPPER.writerWithDefaultPrettyPrinter()
+                    .writeValue(new File(outputDir, "result_meta.json"), meta);
+        } catch (Exception e) {
+            System.err.println("SDP 结果元数据写入失败 " + runId + ": " + e.getMessage());
+        }
+    }
+
+    /** SDP 历史结果列表。 */
+    @GetMapping("/sdp_history")
+    public ResponseEntity<?> sdpHistory(@RequestParam(value = "limit", defaultValue = "50") int limit) {
+        List<Map<String, Object>> items = new ArrayList<>();
+        File[] dirs = sdpResultsRootDir().listFiles(File::isDirectory);
+        if (dirs != null) {
+            for (File dir : dirs) {
+                File metaFile = new File(dir, "result_meta.json");
+                if (!metaFile.isFile()) {
+                    continue;
+                }
+                try {
+                    Map<String, Object> meta = OBJECT_MAPPER.readValue(metaFile,
+                            new TypeReference<Map<String, Object>>() {});
+                    String runId = meta.get("runId") == null ? dir.getName() : meta.get("runId").toString();
+                    meta.put("runId", runId);
+                    meta.put("previewUrl", "/testapi/admin/user/sdp_preview?runId=" + runId);
+                    if (meta.get("createdAt") == null) {
+                        meta.put("createdAt", dir.lastModified());
+                    }
+                    items.add(meta);
+                } catch (Exception e) {
+                    System.err.println("SDP 历史记录读取失败 " + dir.getName() + ": " + e.getMessage());
+                }
+            }
+        }
+        items.sort((a, b) -> Long.compare(epochOf(b.get("createdAt")), epochOf(a.get("createdAt"))));
+        int max = limit <= 0 ? 50 : Math.min(limit, 200);
+        if (items.size() > max) {
+            items = new ArrayList<>(items.subList(0, max));
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("status", "ok");
+        resp.put("total", items.size());
+        resp.put("items", items);
+        return ResponseEntity.ok(resp);
+    }
+
+    /** SDP 结果预览图。 */
+    @GetMapping("/sdp_preview")
+    public ResponseEntity<?> sdpPreview(@RequestParam("runId") String runId) {
+        String id;
+        try {
+            id = requireRunId(runId, "SDP 结果 ID");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+        File png = new File(new File(sdpResultsRootDir(), id), "preview.png");
+        if (!png.isFile()) {
+            return ResponseEntity.notFound().build();
+        }
+        try {
+            byte[] bytes = Files.readAllBytes(png.toPath());
+            return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).body(bytes);
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().body("预览图读取失败: " + e.getMessage());
+        }
+    }
+    /** 读取 SDP 历史结果，重建可直接渲染的帧（含 base64 预览图）。 */
+    @GetMapping("/sdp_result")
+    public ResponseEntity<?> sdpResult(@RequestParam("runId") String runId) {
+        String id;
+        try {
+            id = requireRunId(runId, "SDP 结果 ID");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+        File dir = new File(sdpResultsRootDir(), id);
+        File metaFile = new File(dir, "result_meta.json");
+        File png = new File(dir, "preview.png");
+        if (!metaFile.isFile() || !png.isFile()) {
+            return ResponseEntity.notFound().build();
+        }
+        try {
+            Map<String, Object> meta = OBJECT_MAPPER.readValue(metaFile,
+                    new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> frame = new LinkedHashMap<>();
+            frame.put("runId", id);
+            frame.put("name", meta.get("name"));
+            frame.put("minLng", meta.get("minLng"));
+            frame.put("minLat", meta.get("minLat"));
+            frame.put("maxLng", meta.get("maxLng"));
+            frame.put("maxLat", meta.get("maxLat"));
+            frame.put("width", meta.get("width"));
+            frame.put("height", meta.get("height"));
+            frame.put("valueRange", meta.get("valueRange"));
+            frame.put("stats", meta.get("stats"));
+            frame.put("imageBase64", Base64.getEncoder().encodeToString(Files.readAllBytes(png.toPath())));
+            return ResponseEntity.ok(frame);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("SDP 结果读取失败: " + e.getMessage());
+        }
+    }
+
+
+    /**
+     * 用 SDP 启动物源结果准备冰川泥石流动力学模型输入：
+     * 用户上传的 z.asc 决定计算网格，SDP 的 ZMAX 栅格重投影到动力学模型坐标系后生成 h.asc。
+     */
+    @PostMapping("/prepare_alpha_from_sdp")
+    public ResponseEntity<?> prepareAlphaFromSdp(
+            @RequestParam("zFile") MultipartFile zFile,
+            @RequestParam("sdpRunId") String sdpRunId,
+            @RequestParam(value = "name", required = false) String name) {
+        if (zFile == null || zFile.isEmpty()) {
+            return ResponseEntity.badRequest().body("请上传 z.asc（地形高程）");
+        }
+        String runId;
+        try {
+            runId = requireRunId(sdpRunId, "SDP 结果 ID");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+        File sdpDir = new File(sdpResultsRootDir(), runId);
+        File zmax = new File(sdpDir, "ZMAX_final.tif");
+        if (!zmax.isFile()) {
+            String picked = pickSdpZmaxFile(sdpDir);
+            if (picked == null) {
+                return ResponseEntity.badRequest().body("SDP 结果缺少 ZMAX 栅格: " + runId);
+            }
+            zmax = new File(picked);
+        }
+
+        String jobId = newAlphaJobIdForSdp();
+        File inputDir = new File(alphaJobDir(jobId), "input");
+        try {
+            Files.createDirectories(inputDir.toPath());
+            File zAsc = new File(inputDir, "z.asc");
+            zFile.transferTo(zAsc);
+
+            String script = projectRoot + "/suanfa/SDP_Start/python/sdp_to_alpha.py";
+            if (!new File(script).isFile()) {
+                return ResponseEntity.internalServerError().body("缺少转换脚本: " + script);
+            }
+            List<String> cmd = new ArrayList<>();
+            cmd.add(pythonExe);
+            cmd.add(script);
+            cmd.add("--z-asc");
+            cmd.add(zAsc.getAbsolutePath());
+            cmd.add("--zmax-tif");
+            cmd.add(zmax.getAbsolutePath());
+            cmd.add("--out-h");
+            cmd.add(new File(inputDir, "h.asc").getAbsolutePath());
+            cmd.add("--target-crs");
+            cmd.add(alphaSourceCrs);
+            ProcessResult pr = runProcess(cmd, new File(projectRoot), processTimeoutSeconds,
+                    "[sdp->alpha] ", StandardCharsets.UTF_8);
+            if (pr.exitCode != 0) {
+                return ResponseEntity.internalServerError()
+                        .body("SDP 结果转 h.asc 失败: " + tail(pr.output, 800));
+            }
+            String statsJson = extractSentinel(pr.output, "RESULT_JSON=");
+            Map<String, Object> stats = new LinkedHashMap<>();
+            if (!statsJson.isEmpty()) {
+                stats = OBJECT_MAPPER.readValue(statsJson, new TypeReference<Map<String, Object>>() {});
+            }
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("status", "ok");
+            resp.put("jobId", jobId);
+            resp.put("sdpRunId", runId);
+            resp.put("name", name == null ? "" : name);
+            resp.put("sourceCrs", alphaSourceCrs);
+            resp.put("sourceThicknessRatio", 100);
+            resp.put("stats", stats);
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+
+
     private List<Map<String, Object>> parseFrameList(String json) throws Exception {
         Object parsed = OBJECT_MAPPER.readValue(json, Object.class);
         List<Map<String, Object>> list = new ArrayList<>();
