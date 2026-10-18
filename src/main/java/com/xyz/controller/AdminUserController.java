@@ -2404,6 +2404,15 @@ public class AdminUserController {
             region.put("vertexCount", n);
             region.put("polygon", ringOut);
             region.put("bbox", Arrays.asList(minLon, minLat, maxLon, maxLat));
+            // 前端 Cesium 地形采样得到的真实坡向/坡度（可选，仅用于追溯）
+            Object flowAzimuthRaw = body.get("flow_azimuth");
+            if (flowAzimuthRaw != null && Double.isFinite(numOr(flowAzimuthRaw, Double.NaN))) {
+                region.put("flowAzimuth", numOr(flowAzimuthRaw, 0));
+            }
+            Object demSlopeRaw = body.get("dem_slope");
+            if (demSlopeRaw != null && Double.isFinite(numOr(demSlopeRaw, Double.NaN))) {
+                region.put("demSlope", numOr(demSlopeRaw, 0));
+            }
             resp.put("region", region);
 
             if (!stable) {
