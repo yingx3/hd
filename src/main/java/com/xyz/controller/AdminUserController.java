@@ -2428,7 +2428,8 @@ public class AdminUserController {
                         "--ice-thickness", String.valueOf(iceThickness),
                         "--source-ratio", String.valueOf(sourceRatio),
                         "--cellsize", "30",
-                        "--frames", "16"));
+                        // 帧数与冰岩崩动力学模型保持一致，播放节奏才一致
+                        "--frames", String.valueOf(Math.max(8, proDefaultMaxFrames))));
                 Object azimuth = body.get("flow_azimuth");
                 if (azimuth != null && Double.isFinite(numOr(azimuth, Double.NaN))) {
                     frameCmd.add("--flow-azimuth");
