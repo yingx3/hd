@@ -2196,6 +2196,316 @@ public class AdminUserController {
     }
 
 
+    // ==================== 冰岩崩启动模型：手绘源区 + 稳定性判别 + 启动动画 ====================
+
+    private static double numOr(Object value, double fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            double v = Double.parseDouble(String.valueOf(value).trim());
+            return Double.isFinite(v) ? v : fallback;
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static String strOr(Map<String, Object> body, String key, String fallback) {
+        Object value = body == null ? null : body.get(key);
+        if (value == null) {
+            return fallback;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? fallback : text;
+    }
+
+    /**
+     * 冰岩崩启动模型：手绘源区多边形 + 冰层厚度 + 物源比例。
+     * 先用既有稳定性模型判别源区，minFos &lt; 1 时生成与冰川泥石流动力学模型同格式的 ASC 动画帧。
+     */
+    @PostMapping("/avainit_region")
+    public ResponseEntity<?> runAvainitRegion(@RequestBody Map<String, Object> body) {
+        Object rawPolygon = body.get("polygon");
+        if (!(rawPolygon instanceof List) || ((List<?>) rawPolygon).size() < 3) {
+            return ResponseEntity.badRequest().body("请先在地图上绘制源区（至少 3 个顶点）");
+        }
+        try {
+            List<double[]> ring = new ArrayList<>();
+            for (Object item : (List<?>) rawPolygon) {
+                if (!(item instanceof List) || ((List<?>) item).size() < 2) {
+                    continue;
+                }
+                List<?> p = (List<?>) item;
+                double lon = numOr(p.get(0), Double.NaN);
+                double lat = numOr(p.get(1), Double.NaN);
+                if (Double.isFinite(lon) && Double.isFinite(lat)) {
+                    ring.add(new double[]{lon, lat});
+                }
+            }
+            if (ring.size() < 3) {
+                return ResponseEntity.badRequest().body("源区多边形至少需要 3 个有效顶点");
+            }
+
+            CoordinateReferenceSystem wgs = CRS.decode("EPSG:4326", true);
+            CoordinateReferenceSystem modelCrs = CRS.decode(alphaSourceCrs, true);
+            MathTransform toModel = CRS.findMathTransform(wgs, modelCrs, true);
+            MathTransform toWgs = CRS.findMathTransform(modelCrs, wgs, true);
+
+            int n = ring.size();
+            double[] xs = new double[n];
+            double[] ys = new double[n];
+            double[] src = new double[2];
+            double[] dst = new double[2];
+            for (int i = 0; i < n; i++) {
+                src[0] = ring.get(i)[0];
+                src[1] = ring.get(i)[1];
+                toModel.transform(src, 0, dst, 0, 1);
+                xs[i] = dst[0];
+                ys[i] = dst[1];
+            }
+            // 鞋带公式：源区面积与形心（投影坐标下）
+            double area2 = 0.0;
+            double cx = 0.0;
+            double cy = 0.0;
+            for (int i = 0; i < n; i++) {
+                int j = (i + 1) % n;
+                double cross = xs[i] * ys[j] - xs[j] * ys[i];
+                area2 += cross;
+                cx += (xs[i] + xs[j]) * cross;
+                cy += (ys[i] + ys[j]) * cross;
+            }
+            if (Math.abs(area2) < 1e-6) {
+                return ResponseEntity.badRequest().body("源区多边形面积过小，请重新绘制");
+            }
+            double area = Math.abs(area2) / 2.0;
+            cx /= (3.0 * area2);
+            cy /= (3.0 * area2);
+            double[] centerWgs = new double[]{cx, cy};
+            toWgs.transform(centerWgs, 0, centerWgs, 0, 1);
+
+            double iceThickness = Math.max(0.0, numOr(body.get("ice_thickness"), 4.0));
+            double sourceRatio = numOr(body.get("source_ratio"), 100.0);
+            sourceRatio = Math.max(0.0, Math.min(100.0, sourceRatio));
+            double slideLength = numOr(body.get("slide_length"), 0.0);
+            if (!(slideLength > 0)) {
+                slideLength = Math.sqrt(area);
+            }
+
+            int mode = (int) numOr(body.get("mode"), 1);
+            String scriptName;
+            List<String> args = new ArrayList<>();
+            if (mode == 2) {
+                // 反倾：坡度角 + 反倾角 + 边坡高度 + 层面间隔
+                scriptName = "bedding_inverse.py";
+                args.add(strOr(body, "melt_duration", "240"));
+                args.add(strOr(body, "slope_angle", "30"));
+                args.add(strOr(body, "inverse_angle", "70"));
+                args.add(String.valueOf(iceThickness));
+                args.add(strOr(body, "slope_height", "10"));
+                args.add(strOr(body, "bedding_space", "20"));
+                args.add(strOr(body, "cohesion", "15"));
+                args.add(strOr(body, "friction_angle", "20"));
+                args.add(strOr(body, "rock_density", "20"));
+                args.add(strOr(body, "permeability", "0.0001"));
+            } else if (mode == 3) {
+                // 楔形：法向量 + 滑面面积（缺省用源区面积）+ 边坡高度 + 裂隙
+                scriptName = "bedding_wedget.py";
+                double square = numOr(body.get("square"), 0.0);
+                if (!(square > 0)) {
+                    square = area;
+                }
+                args.add(strOr(body, "melt_duration", "240"));
+                args.add(strOr(body, "slope_angle", "55"));
+                args.add(strOr(body, "normal_vector", "1,1,1"));
+                args.add(String.valueOf(iceThickness));
+                args.add(String.valueOf(square));
+                args.add(strOr(body, "slope_height", "10"));
+                args.add(strOr(body, "fracture", "0.5"));
+                args.add(strOr(body, "cohesion", "15"));
+                args.add(strOr(body, "friction_angle", "20"));
+                args.add(strOr(body, "rock_density", "20"));
+                args.add(strOr(body, "permeability", "0.0001"));
+            } else {
+                // 顺层：坡度角 + 滑面角 + 滑面长度（缺省用 sqrt(面积)）+ 裂隙高度
+                scriptName = "bedding.py";
+                args.add(strOr(body, "melt_duration", "240"));
+                args.add(strOr(body, "slope_angle", "60"));
+                args.add(strOr(body, "slide_angle", "15"));
+                args.add(String.valueOf(iceThickness));
+                args.add(strOr(body, "fissure_height", "10"));
+                args.add(String.valueOf(slideLength));
+                args.add(strOr(body, "cohesion", "15"));
+                args.add(strOr(body, "friction_angle", "20"));
+                args.add(strOr(body, "rock_density", "20"));
+                args.add(strOr(body, "permeability", "0.0001"));
+            }
+
+            List<String> cmd = new ArrayList<>();
+            cmd.add(pythonExe);
+            cmd.add(projectRoot + "/suanfa/avainit/" + scriptName);
+            cmd.addAll(args);
+            ProcessResult pr = runProcess(cmd, new File(projectRoot), processTimeoutSeconds,
+                    "[avainit] ", StandardCharsets.UTF_8);
+            if (pr.exitCode != 0) {
+                return ResponseEntity.internalServerError()
+                        .body("冰岩崩启动模型计算失败: " + tail(pr.output, 800));
+            }
+            String json = extractSentinel(pr.output, "RESULT_JSON=");
+            if (json.isEmpty()) {
+                return ResponseEntity.internalServerError().body("冰岩崩启动模型未返回结果");
+            }
+            Map<String, Object> modelResult = OBJECT_MAPPER.readValue(json,
+                    new TypeReference<Map<String, Object>>() {});
+
+            Object modelError = modelResult.get("error");
+            if (modelError != null && !String.valueOf(modelError).trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(String.valueOf(modelError));
+            }
+            double minFos = 1.0;
+            boolean firstFos = true;
+            Object fosRaw = modelResult.get("fos");
+            if (fosRaw instanceof List) {
+                for (Object v : (List<?>) fosRaw) {
+                    double f = numOr(v, Double.NaN);
+                    if (!Double.isFinite(f) || f <= 0) {
+                        continue;
+                    }
+                    minFos = firstFos ? f : Math.min(minFos, f);
+                    firstFos = false;
+                }
+            }
+            boolean stable = !(minFos < 1.0);
+
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("status", "ok");
+            resp.put("mode", body.get("mode"));
+            resp.put("minFos", minFos);
+            resp.put("stable", stable);
+            resp.put("slideLength", slideLength);
+            resp.put("iceVolume", area * iceThickness);
+            resp.put("sourceVolume", area * iceThickness * sourceRatio / 100.0);
+
+            List<List<Double>> ringOut = new ArrayList<>();
+            double minLon = Double.POSITIVE_INFINITY;
+            double minLat = Double.POSITIVE_INFINITY;
+            double maxLon = Double.NEGATIVE_INFINITY;
+            double maxLat = Double.NEGATIVE_INFINITY;
+            for (double[] p : ring) {
+                ringOut.add(Arrays.asList(p[0], p[1]));
+                minLon = Math.min(minLon, p[0]);
+                minLat = Math.min(minLat, p[1]);
+                maxLon = Math.max(maxLon, p[0]);
+                maxLat = Math.max(maxLat, p[1]);
+            }
+            Map<String, Object> region = new LinkedHashMap<>();
+            region.put("area", area);
+            region.put("centroidLon", centerWgs[0]);
+            region.put("centroidLat", centerWgs[1]);
+            region.put("vertexCount", n);
+            region.put("polygon", ringOut);
+            region.put("bbox", Arrays.asList(minLon, minLat, maxLon, maxLat));
+            resp.put("region", region);
+
+            if (!stable) {
+                String jobId = "avainit_" + System.currentTimeMillis() + "_"
+                        + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+                File jobDir = new File(new File(staticDir, "avainit"), jobId);
+                File framesDir = new File(jobDir, "frames");
+                Files.createDirectories(framesDir.toPath());
+
+                List<List<Double>> projected = new ArrayList<>();
+                for (int i = 0; i < n; i++) {
+                    projected.add(Arrays.asList(xs[i], ys[i]));
+                }
+                File ringFile = new File(jobDir, "ring.json");
+                OBJECT_MAPPER.writeValue(ringFile, projected);
+
+                List<String> frameCmd = new ArrayList<>(Arrays.asList(
+                        pythonExe,
+                        projectRoot + "/suanfa/avainit/region_frames.py",
+                        "--polygon-json", ringFile.getAbsolutePath(),
+                        "--out-dir", framesDir.getAbsolutePath(),
+                        "--ice-thickness", String.valueOf(iceThickness),
+                        "--source-ratio", String.valueOf(sourceRatio),
+                        "--cellsize", "30",
+                        "--frames", "16"));
+                Object azimuth = body.get("flow_azimuth");
+                if (azimuth != null && Double.isFinite(numOr(azimuth, Double.NaN))) {
+                    frameCmd.add("--flow-azimuth");
+                    frameCmd.add(String.valueOf(numOr(azimuth, 0)));
+                }
+                ProcessResult frames = runProcess(frameCmd, new File(projectRoot),
+                        processTimeoutSeconds, "[avainit-frames] ", StandardCharsets.UTF_8);
+                if (frames.exitCode != 0) {
+                    return ResponseEntity.internalServerError()
+                            .body("启动动画帧生成失败: " + tail(frames.output, 800));
+                }
+                resp.put("jobId", jobId);
+                resp.put("animation", buildAvainitFrameResult(jobId, framesDir));
+            }
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+
+    /** 把启动动画帧装配成与冰川泥石流动力学模型一致的渲染契约。 */
+    private Map<String, Object> buildAvainitFrameResult(String jobId, File framesDir) throws IOException {
+        List<String> frameFiles = new ArrayList<>();
+        AscGridMetadataReader.GridInfo first = null;
+        double globalMax = Double.NEGATIVE_INFINITY;
+        boolean hasValue = false;
+        File[] files = framesDir.listFiles((d, name) -> name.matches("h_\\d{6}\\.asc"));
+        if (files != null && files.length > 0) {
+            Arrays.sort(files, Comparator.comparing(File::getName));
+            for (File file : files) {
+                AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(file);
+                if (first == null) {
+                    first = info;
+                }
+                if (info.hasValue) {
+                    globalMax = Math.max(globalMax, info.maxValue);
+                    hasValue = true;
+                }
+                frameFiles.add(file.getName());
+            }
+        }
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("sourceCrs", alphaSourceCrs);
+        meta.put("field", "solid");
+        meta.put("model", "avainit");
+        if (first != null) {
+            meta.put("ncols", first.ncols);
+            meta.put("nrows", first.nrows);
+            meta.put("cellsize", first.cellSize);
+            try {
+                double[] center = AscGridMetadataReader.transformCenter(first, alphaSourceCrs);
+                double[] bbox = AscGridMetadataReader.transformBbox(first, alphaSourceCrs);
+                meta.put("centerLon", center[0]);
+                meta.put("centerLat", center[1]);
+                meta.put("bbox", Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
+            } catch (Exception e) {
+                meta.put("centerLon", null);
+                meta.put("centerLat", null);
+                meta.put("bbox", null);
+            }
+        }
+        meta.put("globalMin", 0.0);
+        meta.put("globalMax", hasValue ? globalMax : 0.0);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", "ok");
+        out.put("jobId", jobId);
+        out.put("frameCount", frameFiles.size());
+        out.put("ascBase", "/ng/avainit/" + jobId + "/frames");
+        out.put("frameFiles", frameFiles);
+        out.put("meta", meta);
+        out.put("bbox", meta.get("bbox"));
+        return out;
+    }
+
+
     private List<Map<String, Object>> parseFrameList(String json) throws Exception {
         Object parsed = OBJECT_MAPPER.readValue(json, Object.class);
         List<Map<String, Object>> list = new ArrayList<>();
