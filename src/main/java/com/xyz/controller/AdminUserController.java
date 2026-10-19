@@ -1841,7 +1841,73 @@ public class AdminUserController {
     }
     /** 汇总 Pro 输出帧的网格元数据（供前端 DebrisFlow 渲染与相机定位）。 */
     /** 是否为冰岩崩启动模型触发的动力学任务（不进入动力学模型历史记录）。 */
+    /** 冰岩崩启动模型的历史源区（供动力学模型选择调用）。 */
+    @GetMapping("/avainit_sources")
+    public ResponseEntity<?> avainitSources(
+            @RequestParam(value = "limit", defaultValue = "50") int limit) {
+        List<Map<String, Object>> items = new ArrayList<>();
+        File root = new File(staticDir, "avainit");
+        File[] dirs = root.listFiles(File::isDirectory);
+        if (dirs != null) {
+            for (File dir : dirs) {
+                String jobId = dir.getName();
+                if (!jobId.matches("[A-Za-z0-9_-]{1,96}")) {
+                    continue;
+                }
+                File metaFile = new File(dir, "source_meta.json");
+                File ascFile = new File(dir, "source.asc");
+                if (!ascFile.isFile()) {
+                    continue;
+                }
+                Map<String, Object> meta = new LinkedHashMap<>();
+                if (metaFile.isFile()) {
+                    try {
+                        meta = OBJECT_MAPPER.readValue(metaFile,
+                                new TypeReference<Map<String, Object>>() {});
+                    } catch (Exception e) {
+                        System.err.println("启动源区元数据读取失败 " + jobId + ": " + e.getMessage());
+                    }
+                }
+                meta.putIfAbsent("jobId", jobId);
+                if (meta.get("createdAt") == null) {
+                    meta.put("createdAt", dir.lastModified());
+                }
+                if (meta.get("bbox") == null || meta.get("maxValue") == null) {
+                    try {
+                        AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(ascFile);
+                        double[] bbox = AscGridMetadataReader.transformBbox(info, alphaSourceCrs);
+                        double[] center = AscGridMetadataReader.transformCenter(info, alphaSourceCrs);
+                        meta.putIfAbsent("bbox", Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
+                        meta.putIfAbsent("centerLon", center[0]);
+                        meta.putIfAbsent("centerLat", center[1]);
+                        meta.putIfAbsent("ncols", info.ncols);
+                        meta.putIfAbsent("nrows", info.nrows);
+                        meta.putIfAbsent("cellsize", info.cellSize);
+                        if (info.hasValue) {
+                            meta.putIfAbsent("maxValue", info.maxValue);
+                        }
+                    } catch (Exception e) {
+                        System.err.println("启动源区栅格读取失败 " + jobId + ": " + e.getMessage());
+                    }
+                }
+                meta.put("url", "/ng/avainit/" + jobId + "/source.asc");
+                items.add(meta);
+            }
+        }
+        items.sort((a, b) -> Long.compare(epochOf(b.get("createdAt")), epochOf(a.get("createdAt"))));
+        int max = limit <= 0 ? 50 : Math.min(limit, 200);
+        if (items.size() > max) {
+            items = new ArrayList<>(items.subList(0, max));
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("status", "ok");
+        resp.put("total", items.size());
+        resp.put("items", items);
+        return ResponseEntity.ok(resp);
+    }
+
     private boolean isAvainitProJob(String jobId, File staticJobDir) {
+
         File marker = new File(staticJobDir, "origin.txt");
         if (marker.isFile()) {
             try {
@@ -2543,6 +2609,17 @@ public class AdminUserController {
             } catch (Exception ex) {
                 sourceField.put("renderBbox", sourceField.get("bbox"));
             }
+            // 落盘索引：供"冰岩崩动力学模型"选择启动模型源区
+            Map<String, Object> sourceMeta = new LinkedHashMap<>(sourceField);
+            sourceMeta.remove("ascText");
+            sourceMeta.put("jobId", jobId);
+            sourceMeta.put("mode", body.get("mode"));
+            sourceMeta.put("createdAt", System.currentTimeMillis());
+            sourceMeta.put("createdAtText", LocalDateTime.now().format(
+                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+            OBJECT_MAPPER.writerWithDefaultPrettyPrinter()
+                    .writeValue(new File(jobDir, "source_meta.json"), sourceMeta);
+
             resp.put("jobId", jobId);
             resp.put("frameCount", 10);
             resp.put("sourceField", sourceField);
@@ -2642,7 +2719,8 @@ public class AdminUserController {
             @RequestParam("avainitJobId") String avainitJobId,
             @RequestParam(value = "dem", required = false) MultipartFile dem,
             @RequestParam(value = "reuseProJobId", required = false) String reuseProJobId,
-            @RequestParam(value = "sourceCrs", required = false) String sourceCrs) {
+            @RequestParam(value = "sourceCrs", required = false) String sourceCrs,
+            @RequestParam(value = "record", required = false, defaultValue = "0") String record) {
         String sourceId;
         try {
             sourceId = requireRunId(avainitJobId, "源区任务 ID");
@@ -2660,13 +2738,16 @@ public class AdminUserController {
             File proJobDir = new File(proJobsRootDir(), proJobId);
             File inputsDir = new File(proJobDir, "inputs");
             Files.createDirectories(inputsDir.toPath());
-            // 标记来源：冰岩崩启动模型的动画任务不应出现在动力学模型的历史记录里
-            Files.write(new File(proJobDir, "origin.txt").toPath(),
-                    Arrays.asList("avainit"), StandardCharsets.UTF_8);
+            // 启动模型自己的动画任务不进动力学模型历史；从动力学模型主动调用时登记为普通任务
+            boolean recordInHistory = "1".equals(record) || "true".equalsIgnoreCase(record);
             File staticJobDir = new File(new File(staticDir, proStaticSubdir), proJobId);
             Files.createDirectories(new File(staticJobDir, "frames").toPath());
-            Files.write(new File(staticJobDir, "origin.txt").toPath(),
-                    Arrays.asList("avainit"), StandardCharsets.UTF_8);
+            if (!recordInHistory) {
+                Files.write(new File(proJobDir, "origin.txt").toPath(),
+                        Arrays.asList("avainit"), StandardCharsets.UTF_8);
+                Files.write(new File(staticJobDir, "origin.txt").toPath(),
+                        Arrays.asList("avainit"), StandardCharsets.UTF_8);
+            }
 
             File demFile = null;
             if (dem != null && !dem.isEmpty()) {
