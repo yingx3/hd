@@ -44,6 +44,9 @@ def main(userName, taskName, sufB, sufL, sufW, sufP, output_fn=None):
     # 原判据 ``max(A)>0 且 max(B)<1`` 会在泥石流层仍在运动时被水层触发而提前退出。
     still_steps = 0
     started = False
+    # 速度阈值（m/s）：低于它视为静止。用 1 m/s 会把缓慢启动的工况误判为"未启动"。
+    still_speed = 0.02
+    still_steps_limit = 10
 
     while max(T) < Par[7]:
 
@@ -74,15 +77,15 @@ def main(userName, taskName, sufB, sufL, sufW, sufP, output_fn=None):
         # 否则起步阶段速度尚未越过 1 m/s 就会被误判为已停止。
         water_speed = float(np.max(A)) if A.size else 0.0
         solid_speed = float(np.max(B)) if B.size else 0.0
-        if solid_speed >= 1.0 or water_speed >= 1.0:
+        max_speed = max(water_speed, solid_speed)
+        if max_speed >= still_speed:
             started = True
             still_steps = 0
-        elif started:
+        else:
             still_steps += 1
-            if still_steps >= 5:
-                break
-        elif max(T) > max(30.0, 0.25 * Par[7]):
-            # 长时间仍未启动：判定该工况不启动，避免无谓空转
-            break
+            if still_steps >= still_steps_limit:
+                # 已启动过 => 流动收敛；从未启动 => 跑到 1/4 时长后放弃
+                if started or max(T) > max(30.0, 0.25 * Par[7]):
+                    break
 
     print("end")
