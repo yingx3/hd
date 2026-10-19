@@ -14,6 +14,7 @@
 """
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -103,8 +104,26 @@ def main():
     ncols, nrows, xll, yll, cellsize, h = read_asc(args.source_asc)
     h = np.where(np.isfinite(h), np.maximum(h, 0.0), 0.0)
 
+    # 计算域必须容纳下游流动：按源区跨度外扩（与前端近似动画同一口径）
+    rows_src, cols_src = np.nonzero(h > 0)
+    if rows_src.size == 0:
+        raise ValueError("源区 ASC 没有有效厚度像元")
+    span_x = float(cols_src.max() - cols_src.min() + 1) * cellsize
+    span_y = float(rows_src.max() - rows_src.min() + 1) * cellsize
+    span_max = max(span_x, span_y, cellsize)
+    pad_cells = int(math.ceil(1.2 * 1.35 * span_max / cellsize))
+    pad_cells = max(4, min(200, pad_cells))
+
+    out_ncols = ncols + 2 * pad_cells
+    out_nrows = nrows + 2 * pad_cells
+    out_xll = xll - pad_cells * cellsize
+    out_yll = yll - pad_cells * cellsize
+    h_pad = np.zeros((out_nrows, out_ncols), dtype=np.float64)
+    h_pad[pad_cells:pad_cells + nrows, pad_cells:pad_cells + ncols] = h
+
     dst_crs = CRS.from_user_input(args.crs)
-    dst_transform = Affine(cellsize, 0.0, xll, 0.0, -cellsize, yll + nrows * cellsize)
+    dst_transform = Affine(cellsize, 0.0, out_xll, 0.0, -cellsize, out_yll + out_nrows * cellsize)
+
 
     with rasterio.open(args.dem) as src:
         band = src.read(1).astype(np.float64)
@@ -112,7 +131,8 @@ def main():
             band = np.where(band == src.nodata, np.nan, band)
         band = np.where(np.isfinite(band), band, np.nan)
         src_crs = src.crs or dst_crs
-        dem = np.full((nrows, ncols), np.nan, dtype=np.float64)
+        dem = np.full((out_nrows, out_ncols), np.nan, dtype=np.float64)
+
         reproject(
             source=band,
             destination=dem,
@@ -133,25 +153,28 @@ def main():
     dem = np.where(np.isfinite(dem), dem, fill_value)
 
     zl = dem
-    zb = dem + h
+    zb = dem + h_pad
     hw = np.zeros_like(dem)
 
     os.makedirs(args.out_dir, exist_ok=True)
-    write_asc(os.path.join(args.out_dir, "zl.asc"), zl, ncols, nrows, xll, yll, cellsize)
-    write_asc(os.path.join(args.out_dir, "zb.asc"), zb, ncols, nrows, xll, yll, cellsize)
-    write_asc(os.path.join(args.out_dir, "hw.asc"), hw, ncols, nrows, xll, yll, cellsize)
+    write_asc(os.path.join(args.out_dir, "zl.asc"), zl, out_ncols, out_nrows, out_xll, out_yll, cellsize)
+    write_asc(os.path.join(args.out_dir, "zb.asc"), zb, out_ncols, out_nrows, out_xll, out_yll, cellsize)
+    write_asc(os.path.join(args.out_dir, "hw.asc"), hw, out_ncols, out_nrows, out_xll, out_yll, cellsize)
 
     out = {
-        "ncols": ncols,
-        "nrows": nrows,
+        "ncols": out_ncols,
+        "nrows": out_nrows,
         "cellsize": cellsize,
-        "xllcorner": xll,
-        "yllcorner": yll,
+        "xllcorner": out_xll,
+        "yllcorner": out_yll,
+        "padCells": pad_cells,
+
         "crs": str(dst_crs),
         "demMin": float(np.min(dem)),
         "demMax": float(np.max(dem)),
         "sourceMax": float(np.max(h)),
         "sourceVolume": float(np.sum(h) * cellsize * cellsize),
+        "domainCells": int(out_ncols * out_nrows),
         "filledCells": filled_cells,
         "outputs": ["zb.asc", "zl.asc", "hw.asc"],
     }

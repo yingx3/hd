@@ -43,8 +43,10 @@ def main(userName, taskName, sufB, sufL, sufW, sufP, output_fn=None):
     # 收敛判据需要两层同时接近静止，并连续保持若干步；
     # 原判据 ``max(A)>0 且 max(B)<1`` 会在泥石流层仍在运动时被水层触发而提前退出。
     still_steps = 0
+    started = False
 
     while max(T) < Par[7]:
+
         dt = time_step(Uw, Us)
         T.append(T[k - 1] + dt)
 
@@ -67,13 +69,20 @@ def main(userName, taskName, sufB, sufL, sufW, sufP, output_fn=None):
                 # 自定义回调带上当前模拟时刻，便于按时间抽帧（doput 路径行为不变）
                 output_fn(Uw, Us, T[k - 1])
 
-        max_solid_speed = float(np.max(A)) if A.size else 0.0
-        max_water_speed = float(np.max(B)) if B.size else 0.0
-        if max_solid_speed < 1.0 and max_water_speed < 1.0:
+        # velocity() 返回 (水相速度, 固相速度)；固相从静止起步，
+        # 必须先确认流动已经启动，之后才允许用"连续若干步静止"判定收敛，
+        # 否则起步阶段速度尚未越过 1 m/s 就会被误判为已停止。
+        water_speed = float(np.max(A)) if A.size else 0.0
+        solid_speed = float(np.max(B)) if B.size else 0.0
+        if solid_speed >= 1.0 or water_speed >= 1.0:
+            started = True
+            still_steps = 0
+        elif started:
             still_steps += 1
             if still_steps >= 5:
                 break
-        else:
-            still_steps = 0
+        elif max(T) > max(30.0, 0.25 * Par[7]):
+            # 长时间仍未启动：判定该工况不启动，避免无谓空转
+            break
 
     print("end")
