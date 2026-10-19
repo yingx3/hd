@@ -90,6 +90,83 @@ public class AdminUserController {
     private File sdpResultsRootDir() {
         return new File(projectRoot, "data/SDP_Results");
     }
+    /** 统一启动物源目录：冰岩崩启动的手绘源区 + 泥石流启动物源计算结果。 */
+    private File initSourcesRootDir() {
+        return new File(staticDir, "init_sources");
+    }
+
+    private File unifiedInitDir(String id) {
+        return new File(initSourcesRootDir(), id);
+    }
+
+    private static String avainitModeLabel(Object mode) {
+        int m = (int) numOr(mode, 1.0);
+        if (m == 2) {
+            return "反倾";
+        }
+        if (m == 3) {
+            return "楔形";
+        }
+        return "顺层滑移";
+    }
+
+    private Map<String, Object> readJsonOrNull(File file) {
+        if (file == null || !file.isFile()) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.readValue(file, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 把一次启动物源写入统一目录（source.asc + meta.json）。 */
+    private void saveUnifiedInitSource(String model, String id, File sourceFile, File previewFile,
+                                       Map<String, Object> extra, String name) {
+        if (sourceFile == null || !sourceFile.isFile()) {
+            return;
+        }
+        try {
+            File dir = unifiedInitDir(id);
+            Files.createDirectories(dir.toPath());
+            File target = new File(dir, "source.asc");
+            if (!sourceFile.getCanonicalPath().equals(target.getCanonicalPath())) {
+                Files.copy(sourceFile.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            if (previewFile != null && previewFile.isFile()) {
+                Files.copy(previewFile.toPath(), new File(dir, "preview.png").toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("id", id);
+            meta.put("model", model);
+            meta.put("modelLabel", "sdp".equals(model) ? "泥石流启动物源计算模型" : "冰岩崩启动模型");
+            meta.put("sourceType", "asc");
+            meta.put("file", "source.asc");
+            meta.put("name", name == null ? "" : name);
+            long created = extra == null ? 0L : epochOf(extra.get("createdAt"));
+            if (created <= 0L) {
+                created = System.currentTimeMillis();
+            }
+            meta.put("createdAt", created);
+            meta.put("createdAtText", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+                    .format(new java.util.Date(created)));
+            if (extra != null) {
+                for (String key : Arrays.asList("maxValue", "meanValue", "volume", "cells", "area",
+                        "bbox", "centerLon", "centerLat", "renderBbox", "padCells",
+                        "renderNcols", "renderNrows")) {
+                    if (extra.get(key) != null) {
+                        meta.put(key, extra.get(key));
+                    }
+                }
+            }
+            OBJECT_MAPPER.writerWithDefaultPrettyPrinter()
+                    .writeValue(new File(dir, "meta.json"), meta);
+        } catch (Exception e) {
+            System.err.println("统一启动物源写入失败 " + id + ": " + e.getMessage());
+        }
+    }
 
     @Value("${app.process-timeout:600}")
     private long processTimeoutSeconds;
@@ -2120,12 +2197,197 @@ public class AdminUserController {
             }
             OBJECT_MAPPER.writerWithDefaultPrettyPrinter()
                     .writeValue(new File(outputDir, "result_meta.json"), meta);
+
+            // 同步到统一启动物源目录：ZMAX 栅格转成 source.asc
+            File initDir = unifiedInitDir(runId);
+            Files.createDirectories(initDir.toPath());
+            File ascOut = new File(initDir, "source.asc");
+            ProcessResult conv = runProcess(Arrays.asList(
+                    pythonExe, projectRoot + "/suanfa/SDP_Start/python/raster_to_asc.py",
+                    "--input", zmaxPath,
+                    "--out", ascOut.getAbsolutePath()),
+                    new File(projectRoot), processTimeoutSeconds,
+                    "[sdp-asc] ", StandardCharsets.UTF_8);
+            if (conv.exitCode == 0) {
+                Map<String, Object> extra = new LinkedHashMap<>();
+                String statJson = extractSentinel(conv.output, "RESULT_JSON=");
+                if (!statJson.isEmpty()) {
+                    Map<String, Object> st = OBJECT_MAPPER.readValue(statJson,
+                            new TypeReference<Map<String, Object>>() {});
+                    extra.put("maxValue", st.get("maxValue"));
+                    extra.put("volume", st.get("volume"));
+                    extra.put("cells", st.get("cells"));
+                    extra.put("area", st.get("area"));
+                }
+                extra.put("createdAt", meta.get("createdAt"));
+                try {
+                    AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(ascOut);
+                    double[] bbox = AscGridMetadataReader.transformBbox(info, alphaSourceCrs);
+                    double[] center = AscGridMetadataReader.transformCenter(info, alphaSourceCrs);
+                    extra.put("bbox", Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
+                    extra.put("centerLon", center[0]);
+                    extra.put("centerLat", center[1]);
+                } catch (Exception ignored) {
+                }
+                saveUnifiedInitSource("sdp", runId, ascOut, new File(outputDir, "preview.png"),
+                        extra, sdpName);
+            } else {
+                System.err.println("SDP 结果转 ASC 失败: " + tail(conv.output, 400));
+            }
         } catch (Exception e) {
             System.err.println("SDP 结果元数据写入失败 " + runId + ": " + e.getMessage());
         }
     }
 
+    /** 把改造前已有的启动物源补录到统一目录（幂等）。 */
+    private void backfillUnifiedInitSources() {
+        File[] avDirs = new File(staticDir, "avainit").listFiles(File::isDirectory);
+        if (avDirs != null) {
+            for (File d : avDirs) {
+                String id = d.getName();
+                if (!id.matches("[A-Za-z0-9_-]{1,96}")) {
+                    continue;
+                }
+                if (new File(unifiedInitDir(id), "meta.json").isFile()) {
+                    continue;
+                }
+                File asc = new File(d, "source.asc");
+                if (!asc.isFile()) {
+                    continue;
+                }
+                Map<String, Object> extra = readJsonOrNull(new File(d, "source_meta.json"));
+                if (extra == null) {
+                    extra = new LinkedHashMap<>();
+                    try {
+                        AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(asc);
+                        double cellArea = info.cellSize * info.cellSize;
+                        extra.put("maxValue", info.maxValue);
+                        extra.put("volume", info.sumValue * cellArea);
+                        extra.put("cells", info.valueCells);
+                        extra.put("area", info.valueCells * cellArea);
+                        double[] bbox = AscGridMetadataReader.transformBbox(info, alphaSourceCrs);
+                        double[] center = AscGridMetadataReader.transformCenter(info, alphaSourceCrs);
+                        extra.put("bbox", Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
+                        extra.put("centerLon", center[0]);
+                        extra.put("centerLat", center[1]);
+                    } catch (Exception ignored) {
+                    }
+                    extra.put("createdAt", d.lastModified());
+                }
+                saveUnifiedInitSource("avainit", id, asc, null, extra,
+                        avainitModeLabel(extra.get("mode")));
+            }
+        }
+
+        File[] sdpDirs = sdpResultsRootDir().listFiles(File::isDirectory);
+        if (sdpDirs != null) {
+            for (File d : sdpDirs) {
+                String id = d.getName();
+                if (!id.matches("[A-Za-z0-9_-]{1,96}")) {
+                    continue;
+                }
+                if (new File(unifiedInitDir(id), "meta.json").isFile()) {
+                    continue;
+                }
+                File zmax = new File(d, "ZMAX_final.tif");
+                if (!zmax.isFile()) {
+                    continue;
+                }
+                File ascOut = new File(unifiedInitDir(id), "source.asc");
+                try {
+                    Files.createDirectories(unifiedInitDir(id).toPath());
+                    ProcessResult conv = runProcess(Arrays.asList(
+                            pythonExe, projectRoot + "/suanfa/SDP_Start/python/raster_to_asc.py",
+                            "--input", zmax.getAbsolutePath(),
+                            "--out", ascOut.getAbsolutePath()),
+                            new File(projectRoot), processTimeoutSeconds,
+                            "[sdp-asc] ", StandardCharsets.UTF_8);
+                    if (conv.exitCode != 0) {
+                        continue;
+                    }
+                    Map<String, Object> extra = new LinkedHashMap<>();
+                    String json = extractSentinel(conv.output, "RESULT_JSON=");
+                    if (!json.isEmpty()) {
+                        Map<String, Object> st = OBJECT_MAPPER.readValue(json,
+                                new TypeReference<Map<String, Object>>() {});
+                        extra.put("maxValue", st.get("maxValue"));
+                        extra.put("volume", st.get("volume"));
+                        extra.put("cells", st.get("cells"));
+                        extra.put("area", st.get("area"));
+                    }
+                    AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(ascOut);
+                    double[] bbox = AscGridMetadataReader.transformBbox(info, alphaSourceCrs);
+                    double[] center = AscGridMetadataReader.transformCenter(info, alphaSourceCrs);
+                    extra.put("bbox", Arrays.asList(bbox[0], bbox[1], bbox[2], bbox[3]));
+                    extra.put("centerLon", center[0]);
+                    extra.put("centerLat", center[1]);
+                    String sdpName = "";
+                    Map<String, Object> old = readJsonOrNull(new File(d, "result_meta.json"));
+                    if (old != null) {
+                        if (old.get("name") != null) {
+                            sdpName = String.valueOf(old.get("name"));
+                        }
+                        if (old.get("createdAt") != null) {
+                            extra.put("createdAt", old.get("createdAt"));
+                        }
+                    }
+                    if (epochOf(extra.get("createdAt")) <= 0L) {
+                        extra.put("createdAt", d.lastModified());
+                    }
+                    saveUnifiedInitSource("sdp", id, ascOut, new File(d, "preview.png"),
+                            extra, sdpName);
+                } catch (Exception e) {
+                    System.err.println("SDP 启动物源回填失败 " + id + ": " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    /** 统一启动物源列表（冰岩崩启动 + 泥石流启动物源）。 */
+    @GetMapping("/init_sources")
+    public ResponseEntity<?> initSources(
+            @RequestParam(value = "limit", defaultValue = "100") int limit,
+            @RequestParam(value = "model", required = false) String model) {
+        backfillUnifiedInitSources();
+        List<Map<String, Object>> items = new ArrayList<>();
+        File[] dirs = initSourcesRootDir().listFiles(File::isDirectory);
+        if (dirs != null) {
+            for (File dir : dirs) {
+                File metaFile = new File(dir, "meta.json");
+                if (!metaFile.isFile()) {
+                    continue;
+                }
+                try {
+                    Map<String, Object> meta = OBJECT_MAPPER.readValue(metaFile,
+                            new TypeReference<Map<String, Object>>() {});
+                    String m = String.valueOf(meta.getOrDefault("model", "")).trim();
+                    if (model != null && !model.trim().isEmpty() && !model.trim().equalsIgnoreCase(m)) {
+                        continue;
+                    }
+                    meta.putIfAbsent("id", dir.getName());
+                    meta.put("ascUrl", "/ng/init_sources/" + dir.getName() + "/source.asc");
+                    meta.put("previewUrl", new File(dir, "preview.png").isFile()
+                            ? "/ng/init_sources/" + dir.getName() + "/preview.png" : null);
+                    items.add(meta);
+                } catch (Exception e) {
+                    System.err.println("启动物源读取失败 " + dir.getName() + ": " + e.getMessage());
+                }
+            }
+        }
+        items.sort((a, b) -> Long.compare(epochOf(b.get("createdAt")), epochOf(a.get("createdAt"))));
+        int max = limit <= 0 ? 100 : Math.min(limit, 300);
+        if (items.size() > max) {
+            items = new ArrayList<>(items.subList(0, max));
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("status", "ok");
+        resp.put("total", items.size());
+        resp.put("items", items);
+        return ResponseEntity.ok(resp);
+    }
+
     /** SDP 历史结果列表。 */
+
     @GetMapping("/sdp_history")
     public ResponseEntity<?> sdpHistory(@RequestParam(value = "limit", defaultValue = "50") int limit) {
         List<Map<String, Object>> items = new ArrayList<>();
@@ -2239,7 +2501,8 @@ public class AdminUserController {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
         File sdpDir = new File(sdpResultsRootDir(), runId);
-        File zmax = new File(sdpDir, "ZMAX_final.tif");
+        File unifiedAsc = new File(unifiedInitDir(runId), "source.asc");
+        File zmax = unifiedAsc.isFile() ? unifiedAsc : new File(sdpDir, "ZMAX_final.tif");
         if (!zmax.isFile()) {
             String picked = pickSdpZmaxFile(sdpDir);
             if (picked == null) {
@@ -2628,6 +2891,8 @@ public class AdminUserController {
                     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
             OBJECT_MAPPER.writerWithDefaultPrettyPrinter()
                     .writeValue(new File(jobDir, "source_meta.json"), sourceMeta);
+            saveUnifiedInitSource("avainit", jobId, ascFile, null, sourceMeta,
+                    avainitModeLabel(body.get("mode")));
 
             resp.put("jobId", jobId);
             resp.put("frameCount", 10);
@@ -2737,7 +3002,9 @@ public class AdminUserController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
-        File sourceAsc = new File(new File(new File(staticDir, "avainit"), sourceId), "source.asc");
+        File unifiedAsc = new File(unifiedInitDir(sourceId), "source.asc");
+        File sourceAsc = unifiedAsc.isFile() ? unifiedAsc
+                : new File(new File(new File(staticDir, "avainit"), sourceId), "source.asc");
         if (!sourceAsc.isFile()) {
             return ResponseEntity.badRequest().body("源区 ASC 不存在，请重新运行冰岩崩启动模型");
         }
