@@ -1872,6 +1872,11 @@ public class AdminUserController {
                 if (meta.get("createdAt") == null) {
                     meta.put("createdAt", dir.lastModified());
                 }
+                Object createdText = meta.get("createdAtText");
+                if (createdText == null || String.valueOf(createdText).trim().isEmpty()) {
+                    meta.put("createdAtText", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+                            .format(new java.util.Date(epochOf(meta.get("createdAt")))));
+                }
                 if (meta.get("bbox") == null || meta.get("maxValue") == null) {
                     try {
                         AscGridMetadataReader.GridInfo info = AscGridMetadataReader.read(ascFile);
@@ -1885,6 +1890,10 @@ public class AdminUserController {
                         meta.putIfAbsent("cellsize", info.cellSize);
                         if (info.hasValue) {
                             meta.putIfAbsent("maxValue", info.maxValue);
+                            double cellArea = info.cellSize * info.cellSize;
+                            meta.putIfAbsent("volume", info.sumValue * cellArea);
+                            meta.putIfAbsent("cells", info.valueCells);
+                            meta.putIfAbsent("area", info.valueCells * cellArea);
                         }
                     } catch (Exception e) {
                         System.err.println("启动源区栅格读取失败 " + jobId + ": " + e.getMessage());

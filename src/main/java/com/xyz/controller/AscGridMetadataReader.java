@@ -35,6 +35,8 @@ final class AscGridMetadataReader {
         double noData = Double.NaN;
         double minValue = Double.POSITIVE_INFINITY;
         double maxValue = Double.NEGATIVE_INFINITY;
+        double sumValue = 0.0;
+        long valueCells = 0L;
         boolean hasValue;
 
         double centerX() {
@@ -130,6 +132,8 @@ final class AscGridMetadataReader {
                     }
                     info.minValue = Math.min(info.minValue, value);
                     info.maxValue = Math.max(info.maxValue, value);
+                    info.sumValue += value;
+                    info.valueCells += 1L;
                     info.hasValue = true;
                 }
             }
