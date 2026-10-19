@@ -4,6 +4,29 @@ import sys
 import json
 import os
 
+def build_time_axis(melt_hours):
+    """与原始 ice-melt-software 一致：每小时 600 个采样点。
+
+    上限 100 万点，防止极端融冰时长在服务端占满内存。
+    """
+    hours = float(melt_hours)
+    if not (hours > 0):
+        raise ValueError("融冰时长必须大于 0")
+    count = int(round(hours) * 600)
+    count = max(2, min(count, 1000000))
+    return np.linspace(0.0, hours * 3600.0, count)
+
+
+def downsample_curve(t, fos, max_points=1000):
+    """服务端只需要极值与少量采样点，避免把上百万点写进 JSON。"""
+    t = np.asarray(t, dtype=float)
+    fos = np.asarray(fos, dtype=float)
+    if t.size <= max_points:
+        return t, fos
+    idx = np.linspace(0, t.size - 1, max_points).astype(int)
+    return t[idx], fos[idx]
+
+
 class bedding():
     def __init__(self, melt_duration, slope_angle, slide_angle, ice_thickness,
                  fissure_height, slide_length, cohesion, friction_angle,
@@ -21,7 +44,7 @@ class bedding():
         self.Ks = permeability  # 渗透系数
 
         # 时间数组（小时转秒，高密度采样）
-        self.t = np.linspace(0, self.t_total * 3600, 240)
+        self.t = build_time_axis(self.t_total)
 
         # 固定物理参数
         self.s1 = np.sin(np.radians(self.theta))
@@ -93,9 +116,13 @@ class bedding():
         t = self.t
         fos = self.factor_of_safety(t)
         # 输出完整数组（无省略、无格式、Java可直接解析）
+        t_out, fos_out = downsample_curve(t, fos)
+        finite = fos[np.isfinite(fos)]
         data = {
-            "t": t.tolist(),
-            "fos": fos.tolist(),
+            "t": t_out.tolist(),
+            "fos": fos_out.tolist(),
+            "minFos": float(np.min(finite)) if finite.size else 1.0,
+            "maxFos": float(np.max(finite)) if finite.size else 1.0,
             "iceVolume": float(self.vf),
             "debrisVolume": float(self.vf * 3.0)
         }

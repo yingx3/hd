@@ -2361,17 +2361,24 @@ public class AdminUserController {
             if (modelError != null && !String.valueOf(modelError).trim().isEmpty()) {
                 return ResponseEntity.badRequest().body(String.valueOf(modelError));
             }
-            double minFos = 1.0;
-            boolean firstFos = true;
-            Object fosRaw = modelResult.get("fos");
-            if (fosRaw instanceof List) {
-                for (Object v : (List<?>) fosRaw) {
-                    double f = numOr(v, Double.NaN);
-                    if (!Double.isFinite(f) || f <= 0) {
-                        continue;
+            // 脚本按原始时间分辨率算出的最小值；fos 数组已降采样，优先用它
+            Double reportedMin = numOr(modelResult.get("minFos"), Double.NaN);
+            double minFos;
+            if (Double.isFinite(reportedMin)) {
+                minFos = reportedMin;
+            } else {
+                minFos = 1.0;
+                boolean firstFos = true;
+                Object fosRaw = modelResult.get("fos");
+                if (fosRaw instanceof List) {
+                    for (Object v : (List<?>) fosRaw) {
+                        double f = numOr(v, Double.NaN);
+                        if (!Double.isFinite(f) || f <= 0) {
+                            continue;
+                        }
+                        minFos = firstFos ? f : Math.min(minFos, f);
+                        firstFos = false;
                     }
-                    minFos = firstFos ? f : Math.min(minFos, f);
-                    firstFos = false;
                 }
             }
             boolean stable = !(minFos < 1.0);
