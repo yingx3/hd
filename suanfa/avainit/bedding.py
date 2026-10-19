@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.integrate import quad
 import math
 import sys
 import json
@@ -13,7 +14,7 @@ def build_time_axis(melt_hours):
     if not (hours > 0):
         raise ValueError("融冰时长必须大于 0")
     count = int(round(hours) * 600)
-    count = max(2, min(count, 1000000))
+    count = max(2, count)
     return np.linspace(0.0, hours * 3600.0, count)
 
 
@@ -51,8 +52,9 @@ class bedding():
         self.c1 = np.cos(np.radians(self.theta))
         self.k1 = np.tan(np.radians(self.theta))
         self.k2 = np.tan(np.radians(self.alpha))
-        self.rw = 10     # 水的重度
-        self.ri = 9.15   # 冰的重度
+        # 与参考软件原样一致（注意：该常数与界面输入的 kN/m³ 岩体重度并非同一量纲）
+        self.rw = 1000
+        self.ri = 915
         self.Af = 0.005  # 裂隙面积
         self.tc = 40     # 标准冰棱柱体融冰时长
         self.v0 = math.pi * 0.15 * 0.0038 ** 2  # 标准冰棱柱体体积
@@ -65,6 +67,15 @@ class bedding():
         mask = x <= (self.L0 * (self.s1 - self.c1) + self.hs) / (self.k2 - self.k1)
         h[mask] = self.k2 * x[mask] + self.L0 * self.c1
         return h
+
+    # 标量版剖面函数（供 scipy.integrate.quad 使用，与参考软件一致）
+    def _surface_scalar(self, x):
+        if x <= (self.L0 * (self.s1 - self.c1) + self.hs) / (self.k2 - self.k1):
+            return self.k2 * x + self.L0 * self.c1
+        return self.k1 * x + self.L0 * self.s1 + self.hs
+
+    def _base_scalar(self, x):
+        return self.k1 * x + self.L0 * self.s1
 
     # 基岩表面函数
     def slope_base(self, x):
@@ -87,15 +98,13 @@ class bedding():
 
     # 安全系数计算
     def factor_of_safety(self, t):
-        # 200 点 + 梯形积分，与原始软件的 quad 数值积分一致
-        x = np.linspace(-self.L0 * self.c1 / self.k2, 0, 200)
+        x0 = -self.L0 * self.c1 / self.k2
         v = self.volume(t)
         h_ice = (self.vf - v) / (self.L0 * self.c1)
 
-        surf1 = self.slope_surface(x)
-        surf2 = self.slope_base(x)
-        dh = surf1 - surf2
-        area = float(np.sum((dh[:-1] + dh[1:]) * 0.5 * (x[1] - x[0])))
+        # 与参考软件一致：scipy quad 精确积分剖面面积
+        area = (quad(self._surface_scalar, x0, 0)[0]
+                - quad(self._base_scalar, x0, 0)[0])
 
         # 滑体重量
         m = self.rs * area + self.ri * h_ice * self.L0 * self.c1

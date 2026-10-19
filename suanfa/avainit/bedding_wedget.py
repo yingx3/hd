@@ -14,7 +14,7 @@ def build_time_axis(melt_hours):
     if not (hours > 0):
         raise ValueError("融冰时长必须大于 0")
     count = int(round(hours) * 600)
-    count = max(2, min(count, 1000000))
+    count = max(2, count)
     return np.linspace(0.0, hours * 3600.0, count)
 
 
