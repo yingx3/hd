@@ -104,6 +104,15 @@ def main():
     ncols, nrows, xll, yll, cellsize, h = read_asc(args.source_asc)
     h = np.where(np.isfinite(h), np.maximum(h, 0.0), 0.0)
 
+    # 统一到 30 m 网格：SDP 的 ZMAX 是 10 m，直接用会让动力学计算域过大
+    if cellsize < 29.999:
+        from scipy.ndimage import zoom
+        factor = cellsize / 30.0
+        h = np.maximum(zoom(h, factor, order=1), 0.0)
+        cellsize = 30.0
+        nrows, ncols = h.shape
+
+
     # 计算域必须容纳下游流动：按源区跨度外扩（与前端近似动画同一口径）
     rows_src, cols_src = np.nonzero(h > 0)
     if rows_src.size == 0:
@@ -111,8 +120,22 @@ def main():
     span_x = float(cols_src.max() - cols_src.min() + 1) * cellsize
     span_y = float(rows_src.max() - rows_src.min() + 1) * cellsize
     span_max = max(span_x, span_y, cellsize)
+
+    # 大范围源区（例如 SDP 的 ZMAX 全图）先裁剪到有效范围的包围盒，
+    # 否则外扩后的计算域会大到无法计算。
+    r0 = max(0, int(rows_src.min()) - 1)
+    r1 = min(nrows, int(rows_src.max()) + 2)
+    c0 = max(0, int(cols_src.min()) - 1)
+    c1 = min(ncols, int(cols_src.max()) + 2)
+    if (r0, r1, c0, c1) != (0, nrows, 0, ncols):
+        h = h[r0:r1, c0:c1]
+        xll = xll + c0 * cellsize
+        yll = yll + (nrows - r1) * cellsize
+        nrows, ncols = h.shape
+
     pad_cells = int(math.ceil(1.2 * 1.35 * span_max / cellsize))
-    pad_cells = max(4, min(200, pad_cells))
+
+    pad_cells = max(4, min(80, pad_cells))
 
     out_ncols = ncols + 2 * pad_cells
     out_nrows = nrows + 2 * pad_cells
@@ -149,8 +172,12 @@ def main():
     if valid.size == 0:
         raise ValueError("DEM 与源区范围没有重叠，或 DEM 无有效高程")
     filled_cells = int(np.count_nonzero(~np.isfinite(dem)))
-    fill_value = float(np.median(valid))
-    dem = np.where(np.isfinite(dem), dem, fill_value)
+    if filled_cells > 0:
+        # 用最近的有效高程补齐（比用中值铺平更接近真实地形）
+        from scipy.ndimage import distance_transform_edt
+        nearest = distance_transform_edt(~np.isfinite(dem),
+                                         return_distances=False, return_indices=True)
+        dem = dem[tuple(nearest)]
 
     zl = dem
     zb = dem + h_pad
