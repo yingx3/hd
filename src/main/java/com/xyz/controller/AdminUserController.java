@@ -1760,6 +1760,10 @@ public class AdminUserController {
                 if (!jobId.matches("[A-Za-z0-9_-]{1,96}")) {
                     continue;
                 }
+                // 跳过冰岩崩启动模型触发的动画任务（含改版前的历史任务）
+                if (isAvainitProJob(jobId, dir)) {
+                    continue;
+                }
                 Map<String, Object> pythonMeta = new LinkedHashMap<>();
                 File metaFile = new File(framesDir, "frames_meta.json");
                 if (metaFile.isFile()) {
@@ -1836,7 +1840,28 @@ public class AdminUserController {
         return ResponseEntity.ok(resp);
     }
     /** 汇总 Pro 输出帧的网格元数据（供前端 DebrisFlow 渲染与相机定位）。 */
+    /** 是否为冰岩崩启动模型触发的动力学任务（不进入动力学模型历史记录）。 */
+    private boolean isAvainitProJob(String jobId, File staticJobDir) {
+        File marker = new File(staticJobDir, "origin.txt");
+        if (marker.isFile()) {
+            try {
+                String text = new String(Files.readAllBytes(marker.toPath()),
+                        StandardCharsets.UTF_8).trim();
+                if ("avainit".equalsIgnoreCase(text)) {
+                    return true;
+                }
+            } catch (IOException ignored) {
+                // 交给下面的兼容判断
+            }
+        }
+        // 兼容改版前的任务：启动模型会在任务根目录留下 dem.*（普通上传只在 inputs/ 下）
+        File[] legacy = new File(proJobsRootDir(), jobId).listFiles((d, n) ->
+                n.toLowerCase(Locale.ROOT).matches("dem\\.(tif|tiff|asc|txt)"));
+        return legacy != null && legacy.length > 0;
+    }
+
     private Map<String, Object> prepareProFrames(File framesDir, String prefix, String jobId, String sourceCrs)
+
             throws Exception {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("outputBase", "/ng/" + proStaticSubdir + "/" + jobId);
@@ -2635,6 +2660,13 @@ public class AdminUserController {
             File proJobDir = new File(proJobsRootDir(), proJobId);
             File inputsDir = new File(proJobDir, "inputs");
             Files.createDirectories(inputsDir.toPath());
+            // 标记来源：冰岩崩启动模型的动画任务不应出现在动力学模型的历史记录里
+            Files.write(new File(proJobDir, "origin.txt").toPath(),
+                    Arrays.asList("avainit"), StandardCharsets.UTF_8);
+            File staticJobDir = new File(new File(staticDir, proStaticSubdir), proJobId);
+            Files.createDirectories(new File(staticJobDir, "frames").toPath());
+            Files.write(new File(staticJobDir, "origin.txt").toPath(),
+                    Arrays.asList("avainit"), StandardCharsets.UTF_8);
 
             File demFile = null;
             if (dem != null && !dem.isEmpty()) {
