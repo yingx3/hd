@@ -1483,6 +1483,15 @@ public class AdminUserController {
                     }
                 }
             }
+            // 动力学模型输入统一限定为 ESRI ASCII（.asc / .txt）
+            for (Map.Entry<String, MultipartFile> e : picked.entrySet()) {
+                String original = e.getValue().getOriginalFilename();
+                String lower = original == null ? "" : original.toLowerCase(Locale.ROOT);
+                if (!lower.endsWith(".asc") && !lower.endsWith(".txt")) {
+                    return ResponseEntity.badRequest()
+                            .body("仅支持 .asc / .txt 输入格式: " + original);
+                }
+            }
             for (String key : Arrays.asList("zb", "zl", "hw")) {
                 if (!picked.containsKey(key)) {
                     return ResponseEntity.badRequest().body("\u7f3a\u5c11\u8f93\u5165\u6587\u4ef6: " + key);
