@@ -2578,6 +2578,122 @@ public class AdminUserController {
     }
 
 
+    /** 在动力学模型任务的 inputs 目录里按键名查找输入栅格。 */
+    private File findProInputByKey(File dir, String key) {
+        if (dir == null || !dir.isDirectory()) {
+            return null;
+        }
+        for (String ext : PRO_INPUT_EXTS) {
+            File f = new File(dir, key + "." + ext);
+            if (f.isFile()) {
+                return f;
+            }
+        }
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                String name = f.getName().toLowerCase(Locale.ROOT);
+                if (name.matches(key + "\\.(tif|tiff|asc|txt)")) {
+                    return f;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 用"源区厚度场 + DEM"准备冰岩崩动力学模型的输入：
+     * zl = DEM，zb = DEM + h，hw = 0，随后交给 /pro_start 跑真实地形上的流动。
+     */
+    @PostMapping("/avainit_prepare_pro")
+    public ResponseEntity<?> prepareAvainitPro(
+            @RequestParam("avainitJobId") String avainitJobId,
+            @RequestParam(value = "dem", required = false) MultipartFile dem,
+            @RequestParam(value = "reuseProJobId", required = false) String reuseProJobId,
+            @RequestParam(value = "sourceCrs", required = false) String sourceCrs) {
+        String sourceId;
+        try {
+            sourceId = requireRunId(avainitJobId, "源区任务 ID");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+        File sourceAsc = new File(new File(new File(staticDir, "avainit"), sourceId), "source.asc");
+        if (!sourceAsc.isFile()) {
+            return ResponseEntity.badRequest().body("源区 ASC 不存在，请重新运行冰岩崩启动模型");
+        }
+
+        try {
+            String proJobId = "pro_" + System.currentTimeMillis() + "_"
+                    + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            File proJobDir = new File(proJobsRootDir(), proJobId);
+            File inputsDir = new File(proJobDir, "inputs");
+            Files.createDirectories(inputsDir.toPath());
+
+            File demFile = null;
+            if (dem != null && !dem.isEmpty()) {
+                String original = dem.getOriginalFilename() == null ? "" : dem.getOriginalFilename();
+                String lower = original.toLowerCase(Locale.ROOT);
+                String ext = ".tif";
+                for (String candidate : Arrays.asList(".tif", ".tiff", ".asc", ".txt")) {
+                    if (lower.endsWith(candidate)) {
+                        ext = candidate;
+                        break;
+                    }
+                }
+                demFile = new File(proJobDir, "dem" + ext);
+                dem.transferTo(demFile);
+            } else if (reuseProJobId != null && !reuseProJobId.trim().isEmpty()) {
+                String reuseId;
+                try {
+                    reuseId = requireRunId(reuseProJobId.trim(), "动力学模型任务 ID");
+                } catch (IllegalArgumentException e) {
+                    return ResponseEntity.badRequest().body(e.getMessage());
+                }
+                File reuseInputs = new File(new File(proJobsRootDir(), reuseId), "inputs");
+                demFile = findProInputByKey(reuseInputs, "zl");
+                if (demFile == null) {
+                    return ResponseEntity.badRequest()
+                            .body("该动力学模型任务没有可复用的灾后地形 zl，请直接上传 DEM");
+                }
+            } else {
+                return ResponseEntity.badRequest()
+                        .body("请上传地形 DEM，或先运行冰岩崩动力学模型以复用其灾后地形");
+            }
+
+            String crs = (sourceCrs == null || sourceCrs.trim().isEmpty())
+                    ? alphaSourceCrs : sourceCrs.trim();
+            List<String> cmd = new ArrayList<>(Arrays.asList(
+                    pythonExe,
+                    projectRoot + "/suanfa/avainit/build_pro_inputs.py",
+                    "--source-asc", sourceAsc.getAbsolutePath(),
+                    "--dem", demFile.getAbsolutePath(),
+                    "--out-dir", inputsDir.getAbsolutePath(),
+                    "--crs", crs));
+            ProcessResult pr = runProcess(cmd, new File(projectRoot), processTimeoutSeconds,
+                    "[avainit-pro-inputs] ", StandardCharsets.UTF_8);
+            if (pr.exitCode != 0) {
+                return ResponseEntity.internalServerError()
+                        .body("动力学模型输入生成失败: " + tail(pr.output, 800));
+            }
+            String json = extractSentinel(pr.output, "RESULT_JSON=");
+            Map<String, Object> stats = new LinkedHashMap<>();
+            if (!json.isEmpty()) {
+                stats = OBJECT_MAPPER.readValue(json, new TypeReference<Map<String, Object>>() {});
+            }
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("status", "ok");
+            resp.put("proJobId", proJobId);
+            resp.put("sourceCrs", crs);
+            resp.put("inputs", Arrays.asList("zb.asc", "zl.asc", "hw.asc"));
+            resp.put("stats", stats);
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+
+
     private List<Map<String, Object>> parseFrameList(String json) throws Exception {
         Object parsed = OBJECT_MAPPER.readValue(json, Object.class);
         List<Map<String, Object>> list = new ArrayList<>();
