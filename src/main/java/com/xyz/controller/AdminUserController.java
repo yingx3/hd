@@ -2415,44 +2415,106 @@ public class AdminUserController {
             }
             resp.put("region", region);
 
-            if (!stable) {
-                String jobId = "avainit_" + System.currentTimeMillis() + "_"
-                        + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
-                File jobDir = new File(new File(staticDir, "avainit"), jobId);
-                File framesDir = new File(jobDir, "frames");
-                Files.createDirectories(framesDir.toPath());
+            // 按手绘范围 + 冰层厚度生成源区厚度场（ASC），由前端据此合成启动动画
+            String jobId = "avainit_" + System.currentTimeMillis() + "_"
+                    + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            File jobDir = new File(new File(staticDir, "avainit"), jobId);
+            File ascFile = new File(jobDir, "source.asc");
+            Files.createDirectories(jobDir.toPath());
 
-                List<List<Double>> projected = new ArrayList<>();
-                for (int i = 0; i < n; i++) {
-                    projected.add(Arrays.asList(xs[i], ys[i]));
-                }
-                File ringFile = new File(jobDir, "ring.json");
-                OBJECT_MAPPER.writeValue(ringFile, projected);
-
-                List<String> frameCmd = new ArrayList<>(Arrays.asList(
-                        pythonExe,
-                        projectRoot + "/suanfa/avainit/region_frames.py",
-                        "--polygon-json", ringFile.getAbsolutePath(),
-                        "--out-dir", framesDir.getAbsolutePath(),
-                        "--ice-thickness", String.valueOf(iceThickness),
-                        "--source-ratio", String.valueOf(sourceRatio),
-                        "--cellsize", "30",
-                        // 帧数与冰岩崩动力学模型保持一致，播放节奏才一致
-                        "--frames", String.valueOf(Math.max(8, proDefaultMaxFrames))));
-                Object azimuth = body.get("flow_azimuth");
-                if (azimuth != null && Double.isFinite(numOr(azimuth, Double.NaN))) {
-                    frameCmd.add("--flow-azimuth");
-                    frameCmd.add(String.valueOf(numOr(azimuth, 0)));
-                }
-                ProcessResult frames = runProcess(frameCmd, new File(projectRoot),
-                        processTimeoutSeconds, "[avainit-frames] ", StandardCharsets.UTF_8);
-                if (frames.exitCode != 0) {
-                    return ResponseEntity.internalServerError()
-                            .body("启动动画帧生成失败: " + tail(frames.output, 800));
-                }
-                resp.put("jobId", jobId);
-                resp.put("animation", buildAvainitFrameResult(jobId, framesDir));
+            List<List<Double>> projected = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                projected.add(Arrays.asList(xs[i], ys[i]));
             }
+            File ringFile = new File(jobDir, "ring.json");
+            OBJECT_MAPPER.writeValue(ringFile, projected);
+
+            List<String> fieldCmd = new ArrayList<>(Arrays.asList(
+                    pythonExe,
+                    projectRoot + "/suanfa/avainit/source_field.py",
+                    "--polygon-json", ringFile.getAbsolutePath(),
+                    "--ice-thickness", String.valueOf(iceThickness),
+                    "--cellsize", "30",
+                    "--out-asc", ascFile.getAbsolutePath()));
+            ProcessResult fieldRun = runProcess(fieldCmd, new File(projectRoot),
+                    processTimeoutSeconds, "[avainit-field] ", StandardCharsets.UTF_8);
+            if (fieldRun.exitCode != 0) {
+                return ResponseEntity.internalServerError()
+                        .body("源区厚度场生成失败: " + tail(fieldRun.output, 800));
+            }
+            String fieldJson = extractSentinel(fieldRun.output, "RESULT_JSON=");
+            if (fieldJson.isEmpty()) {
+                return ResponseEntity.internalServerError().body("源区厚度场未返回结果");
+            }
+            Map<String, Object> fieldStats = OBJECT_MAPPER.readValue(fieldJson,
+                    new TypeReference<Map<String, Object>>() {});
+
+            Map<String, Object> sourceField = new LinkedHashMap<>();
+            sourceField.put("ascText",
+                    new String(Files.readAllBytes(ascFile.toPath()), StandardCharsets.UTF_8));
+            sourceField.put("url", "/ng/avainit/" + jobId + "/source.asc");
+            sourceField.put("crs", alphaSourceCrs);
+            sourceField.put("ncols", fieldStats.get("ncols"));
+            sourceField.put("nrows", fieldStats.get("nrows"));
+            sourceField.put("cellsize", fieldStats.get("cellsize"));
+            sourceField.put("xllcorner", fieldStats.get("xllcorner"));
+            sourceField.put("yllcorner", fieldStats.get("yllcorner"));
+            sourceField.put("maxValue", fieldStats.get("maxValue"));
+            sourceField.put("meanValue", fieldStats.get("meanValue"));
+            sourceField.put("volume", fieldStats.get("volume"));
+            sourceField.put("cells", fieldStats.get("cells"));
+            sourceField.put("area", fieldStats.get("area"));
+            try {
+                AscGridMetadataReader.GridInfo fieldInfo = AscGridMetadataReader.read(ascFile);
+                double[] fieldBbox = AscGridMetadataReader.transformBbox(fieldInfo, alphaSourceCrs);
+                double[] fieldCenter = AscGridMetadataReader.transformCenter(fieldInfo, alphaSourceCrs);
+                sourceField.put("bbox", Arrays.asList(fieldBbox[0], fieldBbox[1], fieldBbox[2], fieldBbox[3]));
+                sourceField.put("centerLon", fieldCenter[0]);
+                sourceField.put("centerLat", fieldCenter[1]);
+            } catch (Exception ex) {
+                sourceField.put("bbox", null);
+                sourceField.put("centerLon", null);
+                sourceField.put("centerLat", null);
+            }
+
+            // 崩落体会推进到源区之外，给出外扩后的渲染网格与 WGS84 包围盒
+            double fieldCell = numOr(fieldStats.get("cellsize"), 30.0);
+            int fieldNcols = (int) numOr(fieldStats.get("ncols"), 0);
+            int fieldNrows = (int) numOr(fieldStats.get("nrows"), 0);
+            double fieldXll = numOr(fieldStats.get("xllcorner"), 0.0);
+            double fieldYll = numOr(fieldStats.get("yllcorner"), 0.0);
+            int padCells = (int) Math.ceil(
+                    numOr(fieldStats.get("padMeters"), 0.0) / Math.max(fieldCell, 1e-6));
+            sourceField.put("padCells", padCells);
+            sourceField.put("renderNcols", fieldNcols + 2 * padCells);
+            sourceField.put("renderNrows", fieldNrows + 2 * padCells);
+            try {
+                double ex0 = fieldXll - padCells * fieldCell;
+                double ey0 = fieldYll - padCells * fieldCell;
+                double ex1 = fieldXll + (fieldNcols + padCells) * fieldCell;
+                double ey1 = fieldYll + (fieldNrows + padCells) * fieldCell;
+                double[][] corners = {{ex0, ey0}, {ex1, ey0}, {ex1, ey1}, {ex0, ey1}};
+                double rMinLon = Double.POSITIVE_INFINITY;
+                double rMinLat = Double.POSITIVE_INFINITY;
+                double rMaxLon = Double.NEGATIVE_INFINITY;
+                double rMaxLat = Double.NEGATIVE_INFINITY;
+                for (double[] corner : corners) {
+                    double[] p = new double[]{corner[0], corner[1]};
+                    toWgs.transform(p, 0, p, 0, 1);
+                    rMinLon = Math.min(rMinLon, p[0]);
+                    rMinLat = Math.min(rMinLat, p[1]);
+                    rMaxLon = Math.max(rMaxLon, p[0]);
+                    rMaxLat = Math.max(rMaxLat, p[1]);
+                }
+                sourceField.put("renderBbox",
+                        Arrays.asList(rMinLon, rMinLat, rMaxLon, rMaxLat));
+            } catch (Exception ex) {
+                sourceField.put("renderBbox", sourceField.get("bbox"));
+            }
+            resp.put("jobId", jobId);
+            resp.put("frameCount", 10);
+            resp.put("sourceField", sourceField);
+
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             e.printStackTrace();
