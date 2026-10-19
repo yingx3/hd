@@ -145,6 +145,13 @@ def main():
 
     h = np.where(np.isfinite(destination), np.maximum(destination, 0.0), 0.0)
 
+    # 源区与 z.asc 网格不重叠时，重采样结果会全为 0，导致动力学模型无物源
+    if not np.any(h > 0.01):
+        raise ValueError(
+            "所选启动物源与 z.asc 计算范围不重叠（重采样后厚度全为 0），"
+            "请确认源区与地形位于同一区域")
+
+
     out_dir = os.path.dirname(os.path.abspath(args.out_h))
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
