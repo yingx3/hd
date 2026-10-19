@@ -64,18 +64,22 @@ class bedding():
 
     # 安全系数计算
     def factor_of_safety(self, t):
-        x = np.linspace(-self.L0 * self.c1 / self.k2, 0, 10)
+        # 200 点 + 梯形积分，与原始软件的 quad 数值积分一致
+        x = np.linspace(-self.L0 * self.c1 / self.k2, 0, 200)
         v = self.volume(t)
         h_ice = (self.vf - v) / (self.L0 * self.c1)
 
         surf1 = self.slope_surface(x)
         surf2 = self.slope_base(x)
-        dx = x[1] - x[0]
+        dh = surf1 - surf2
+        area = float(np.sum((dh[:-1] + dh[1:]) * 0.5 * (x[1] - x[0])))
 
         # 滑体重量
-        m = self.rs * (dx * np.sum(surf1) - dx * np.sum(surf2)) + self.ri * h_ice * self.L0 * self.c1
+        m = self.rs * area + self.ri * h_ice * self.L0 * self.c1
         HH = -self.H(t, v)
-        ht = dx * np.cumsum(HH, axis=0)
+        # 注意：H 的单位是 m/s，乘时间步 dt 才是水头高度 m；
+        # 原实现误用空间步长 dx，量纲变成 m²/s。
+        ht = (t[1] - t[0]) * np.cumsum(HH, axis=0)
 
         # 抗滑力 & 下滑力
         resist = self.c_ * self.L0 + (m * self.c1 - 0.5 * self.rw * ht * self.L0 -
