@@ -2716,20 +2716,26 @@ public class AdminUserController {
      */
     @PostMapping("/avainit_prepare_pro")
     public ResponseEntity<?> prepareAvainitPro(
-            @RequestParam("avainitJobId") String avainitJobId,
+            @RequestParam(value = "avainitJobId", required = false) String avainitJobId,
+            @RequestParam(value = "sourceAsc", required = false) MultipartFile sourceAscFile,
             @RequestParam(value = "dem", required = false) MultipartFile dem,
             @RequestParam(value = "reuseProJobId", required = false) String reuseProJobId,
             @RequestParam(value = "sourceCrs", required = false) String sourceCrs,
             @RequestParam(value = "record", required = false, defaultValue = "0") String record) {
-        String sourceId;
-        try {
-            sourceId = requireRunId(avainitJobId, "源区任务 ID");
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-        File sourceAsc = new File(new File(new File(staticDir, "avainit"), sourceId), "source.asc");
-        if (!sourceAsc.isFile()) {
-            return ResponseEntity.badRequest().body("源区 ASC 不存在，请重新运行冰岩崩启动模型");
+        // 源区来源：直接上传手绘 .asc，或引用启动模型历史结果里的 source.asc
+        boolean uploadSource = sourceAscFile != null && !sourceAscFile.isEmpty();
+        File sourceAsc = null;
+        if (!uploadSource) {
+            String sourceId;
+            try {
+                sourceId = requireRunId(avainitJobId, "源区任务 ID");
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(e.getMessage());
+            }
+            sourceAsc = new File(new File(new File(staticDir, "avainit"), sourceId), "source.asc");
+            if (!sourceAsc.isFile()) {
+                return ResponseEntity.badRequest().body("源区 ASC 不存在，请重新运行冰岩崩启动模型");
+            }
         }
 
         try {
@@ -2738,6 +2744,13 @@ public class AdminUserController {
             File proJobDir = new File(proJobsRootDir(), proJobId);
             File inputsDir = new File(proJobDir, "inputs");
             Files.createDirectories(inputsDir.toPath());
+            if (uploadSource) {
+                sourceAsc = new File(proJobDir, "source.asc");
+                sourceAscFile.transferTo(sourceAsc);
+            }
+            if (sourceAsc == null) {
+                return ResponseEntity.badRequest().body("缺少源区 ASC");
+            }
             // 启动模型自己的动画任务不进动力学模型历史；从动力学模型主动调用时登记为普通任务
             boolean recordInHistory = "1".equals(record) || "true".equalsIgnoreCase(record);
             File staticJobDir = new File(new File(staticDir, proStaticSubdir), proJobId);
