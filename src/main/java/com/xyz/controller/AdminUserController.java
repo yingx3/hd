@@ -1217,30 +1217,41 @@ public class AdminUserController {
     @PostMapping("/avainit")
     public ResponseEntity<?> runAvainit(@RequestBody Map<String, Object> body) {
         return runAvainitScript("bedding.py", Arrays.asList(
-                str(body, "melt_duration"), str(body, "slope_angle"), str(body, "slide_angle"),
-                str(body, "ice_thickness"), str(body, "fissure_height"), str(body, "slide_length"),
-                str(body, "cohesion"), str(body, "friction_angle"), str(body, "rock_density"),
-                str(body, "permeability")));
+                strOr(body, "melt_duration", "240"), strOr(body, "slope_angle", "60"),
+                strOr(body, "slide_angle", "15"), strOr(body, "ice_thickness", "4"),
+                strOr(body, "fissure_height", "10"), strOr(body, "slide_length", "20"),
+                strOr(body, "cohesion", "15"), strOr(body, "friction_angle", "20"),
+                strOr(body, "rock_density", "20"), strOr(body, "permeability", "0.0001"),
+                strOr(body, "rock_bridge_length", "0"),
+                strOr(body, "bridge_cohesion", strOr(body, "cohesion", "15")),
+                strOr(body, "bridge_friction_angle", strOr(body, "friction_angle", "20"))));
     }
 
     @PostMapping("/bedding_inverse")
     public ResponseEntity<?> runBeddingInverse(@RequestBody Map<String, Object> body) {
         return runAvainitScript("bedding_inverse.py", Arrays.asList(
-                str(body, "melt_duration"), str(body, "slope_angle"), str(body, "inverse_angle"),
-                str(body, "ice_thickness"), str(body, "slope_height"), str(body, "bedding_space"),
-                str(body, "cohesion"), str(body, "friction_angle"), str(body, "rock_density"),
-                str(body, "permeability")));
+                strOr(body, "melt_duration", "240"), strOr(body, "slope_angle", "30"),
+                strOr(body, "inverse_angle", "70"), strOr(body, "ice_thickness", "5"),
+                strOr(body, "slope_height", "10"), strOr(body, "bedding_space", "20"),
+                strOr(body, "fracture_tensile_strength", strOr(body, "friction_angle", "20")),
+                strOr(body, "rock_tensile_strength", strOr(body, "cohesion", "15")),
+                strOr(body, "rock_density", "20"), strOr(body, "permeability", "0.0001"),
+                strOr(body, "rock_bridge_length", "0")));
     }
 
     @PostMapping("/bedding_wedge")
     public ResponseEntity<?> runBeddingWedge(@RequestBody Map<String, Object> body) {
         return runAvainitScript("bedding_wedget.py", Arrays.asList(
-                str(body, "melt_duration"), str(body, "slope_angle"), str(body, "normal_vector"),
-                str(body, "ice_thickness"), str(body, "square"), str(body, "slope_height"),
-                str(body, "fracture"), str(body, "cohesion"), str(body, "friction_angle"),
-                str(body, "rock_density"), str(body, "permeability")));
+                strOr(body, "melt_duration", "240"), strOr(body, "slope_angle", "55"),
+                strOr(body, "normal_vector", "1,1,1"), strOr(body, "ice_thickness", "5"),
+                strOr(body, "square", "200"), strOr(body, "slope_height", "10"),
+                strOr(body, "fracture", "0.5"), strOr(body, "cohesion", "15"),
+                strOr(body, "friction_angle", "20"), strOr(body, "rock_density", "20"),
+                strOr(body, "permeability", "0.0001"),
+                strOr(body, "rock_bridge_length", "0"),
+                strOr(body, "bridge_cohesion", strOr(body, "cohesion", "15")),
+                strOr(body, "bridge_friction_angle", strOr(body, "friction_angle", "20"))));
     }
-
     private String str(Map<String, Object> body, String key) {
         Object v = body.get(key);
         return v == null ? "" : v.toString();
@@ -2667,7 +2678,7 @@ public class AdminUserController {
             String scriptName;
             List<String> args = new ArrayList<>();
             if (mode == 2) {
-                // 反倾：坡度角 + 反倾角 + 边坡高度 + 层面间隔
+                // 反倾：坡度角 + 反倾角 + 边坡高度 + 层面间隔 + 岩桥长度 + 两类抗拉强度
                 scriptName = "bedding_inverse.py";
                 args.add(strOr(body, "melt_duration", "240"));
                 args.add(strOr(body, "slope_angle", "30"));
@@ -2675,12 +2686,13 @@ public class AdminUserController {
                 args.add(String.valueOf(iceThickness));
                 args.add(strOr(body, "slope_height", "10"));
                 args.add(strOr(body, "bedding_space", "20"));
-                args.add(strOr(body, "cohesion", "15"));
-                args.add(strOr(body, "friction_angle", "20"));
+                args.add(strOr(body, "fracture_tensile_strength", strOr(body, "friction_angle", "20")));
+                args.add(strOr(body, "rock_tensile_strength", strOr(body, "cohesion", "15")));
                 args.add(strOr(body, "rock_density", "20"));
                 args.add(strOr(body, "permeability", "0.0001"));
+                args.add(strOr(body, "rock_bridge_length", "5"));
             } else if (mode == 3) {
-                // 楔形：法向量 + 滑面面积（缺省用源区面积）+ 边坡高度 + 裂隙
+                // 楔形：法向量 + 滑面面积（缺省用源区面积）+ 边坡高度 + 岩桥与两类强度参数
                 scriptName = "bedding_wedget.py";
                 double square = numOr(body.get("square"), 0.0);
                 if (!(square > 0)) {
@@ -2697,8 +2709,11 @@ public class AdminUserController {
                 args.add(strOr(body, "friction_angle", "20"));
                 args.add(strOr(body, "rock_density", "20"));
                 args.add(strOr(body, "permeability", "0.0001"));
+                args.add(strOr(body, "rock_bridge_length", "5"));
+                args.add(strOr(body, "bridge_cohesion", strOr(body, "cohesion", "15")));
+                args.add(strOr(body, "bridge_friction_angle", strOr(body, "friction_angle", "20")));
             } else {
-                // 顺层：坡度角 + 滑面角 + 滑面长度（缺省用 sqrt(面积)）+ 裂隙高度
+                // 顺层：坡度角 + 滑面角 + 滑面长度（缺省用 sqrt(面积)）+ 岩桥与两类强度参数
                 scriptName = "bedding.py";
                 args.add(strOr(body, "melt_duration", "240"));
                 args.add(strOr(body, "slope_angle", "60"));
@@ -2710,8 +2725,10 @@ public class AdminUserController {
                 args.add(strOr(body, "friction_angle", "20"));
                 args.add(strOr(body, "rock_density", "20"));
                 args.add(strOr(body, "permeability", "0.0001"));
+                args.add(strOr(body, "rock_bridge_length", "5"));
+                args.add(strOr(body, "bridge_cohesion", strOr(body, "cohesion", "15")));
+                args.add(strOr(body, "bridge_friction_angle", strOr(body, "friction_angle", "20")));
             }
-
             List<String> cmd = new ArrayList<>();
             cmd.add(pythonExe);
             cmd.add(projectRoot + "/suanfa/avainit/" + scriptName);

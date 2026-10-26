@@ -1,15 +1,13 @@
-import numpy as np
+﻿import numpy as np
 from scipy.integrate import quad
 import math
 import sys
 import json
 import os
 
-def build_time_axis(melt_hours):
-    """与原始 ice-melt-software 一致：每小时 600 个采样点。
 
-    上限 100 万点，防止极端融冰时长在服务端占满内存。
-    """
+def build_time_axis(melt_hours):
+    """与参考软件一致：每小时 600 个采样点。"""
     hours = float(melt_hours)
     if not (hours > 0):
         raise ValueError("融冰时长必须大于 0")
@@ -19,7 +17,7 @@ def build_time_axis(melt_hours):
 
 
 def downsample_curve(t, fos, max_points=1000):
-    """服务端只需要极值与少量采样点，避免把上百万点写进 JSON。"""
+    """服务端只返回极值与有限采样点，避免大量点写入 JSON。"""
     t = np.asarray(t, dtype=float)
     fos = np.asarray(fos, dtype=float)
     if t.size <= max_points:
@@ -29,102 +27,119 @@ def downsample_curve(t, fos, max_points=1000):
 
 
 class bedding():
+    """顺层冰岩体稳定系数模型，按新版参考软件直接移植。
+
+    参数约定：
+    - theta / theta_：滑面倾角、滑面内摩擦角（度）
+    - L0：滑面长度；rb：岩桥长度，L=L0+rb
+    - cohesion：滑面内聚力；bridge_cohesion：岩桥内聚力（MPa）
+    - friction_angle：滑面内摩擦角；bridge_friction_angle：岩桥内摩擦角（度）
+    """
+
     def __init__(self, melt_duration, slope_angle, slide_angle, ice_thickness,
                  fissure_height, slide_length, cohesion, friction_angle,
-                 rock_density, permeability):
-        # ===================== 直接定义所有计算参数 =====================
-        self.t_total = melt_duration  # 融冰时长
-        self.alpha = slope_angle  # 边坡坡度
-        self.theta = slide_angle  # 滑面角
-        self.hi = ice_thickness  # 冰层厚度
-        self.hs = fissure_height  # 裂隙高度
-        self.L0 = slide_length  # 滑面长度
-        self.c_ = cohesion  # 有效粘聚力
-        self.theta_ = friction_angle  # 有效内摩擦角
-        self.rs = rock_density  # 饱和岩体重度
-        self.Ks = permeability  # 渗透系数
+                 rock_density, permeability, rock_bridge_length=0.0,
+                 bridge_cohesion=0.0, bridge_friction_angle=0.0):
+        self.t_total = float(melt_duration)
+        self.alpha = float(slope_angle)
+        self.theta = float(slide_angle)
+        self.hi = float(ice_thickness)
+        self.hs = float(fissure_height)
+        self.L0 = max(0.0, float(slide_length))
+        self.rb = max(0.0, float(rock_bridge_length))
+        self.L = self.rb + self.L0
+        self.c_ = float(cohesion) * 1e6
+        self.c = float(bridge_cohesion) * 1e6
+        self.theta_ = float(friction_angle)
+        self.theta2 = float(bridge_friction_angle)
+        self.rs = float(rock_density) * 1000.0
+        self.Ks = float(permeability)
 
-        # 时间数组（小时转秒，高密度采样）
+        if not (self.L > 0):
+            raise ValueError("滑面长度与岩桥长度之和必须大于 0")
         self.t = build_time_axis(self.t_total)
-
-        # 固定物理参数
         self.s1 = np.sin(np.radians(self.theta))
         self.c1 = np.cos(np.radians(self.theta))
         self.k1 = np.tan(np.radians(self.theta))
         self.k2 = np.tan(np.radians(self.alpha))
-        # 与参考软件原样一致（注意：该常数与界面输入的 kN/m³ 岩体重度并非同一量纲）
-        self.rw = 1000
-        self.ri = 915
-        self.Af = 0.005  # 裂隙面积
-        self.tc = 40     # 标准冰棱柱体融冰时长
-        self.v0 = math.pi * 0.15 * 0.0038 ** 2  # 标准冰棱柱体体积
-        self.vf = self.hi * self.L0 * self.c1  # 冰的初始体积
-        self.ro = self.vf / self.v0  # 换算系数
+        if abs(self.k2 - self.k1) < 1e-12:
+            raise ValueError("边坡角度与滑面角不能相同")
+        self.rw = 10000.0
+        self.ri = 9150.0
+        self.Af = 0.005
+        self.tc = 40.0
+        self.v0 = math.pi * 0.15 * 0.0038 ** 2
+        self.vf = self.hi * self.L * self.c1
+        self.ro = self.vf / self.v0 if self.v0 else 0.0
 
-    # 坡面函数
     def slope_surface(self, x):
-        h = self.k1 * x + self.L0 * self.s1 + self.hs
-        mask = x <= (self.L0 * (self.s1 - self.c1) + self.hs) / (self.k2 - self.k1)
-        h[mask] = self.k2 * x[mask] + self.L0 * self.c1
+        h = self.k1 * x + self.L * self.s1 + self.hs
+        mask = x <= (self.L * (self.s1 - self.c1) + self.hs) / (self.k2 - self.k1)
+        h[mask] = self.k2 * x[mask] + self.L * self.c1
         return h
 
-    # 标量版剖面函数（供 scipy.integrate.quad 使用，与参考软件一致）
     def _surface_scalar(self, x):
-        if x <= (self.L0 * (self.s1 - self.c1) + self.hs) / (self.k2 - self.k1):
-            return self.k2 * x + self.L0 * self.c1
-        return self.k1 * x + self.L0 * self.s1 + self.hs
+        if x <= (self.L * (self.s1 - self.c1) + self.hs) / (self.k2 - self.k1):
+            return self.k2 * x + self.L * self.c1
+        return self.k1 * x + self.L * self.s1 + self.hs
 
     def _base_scalar(self, x):
-        return self.k1 * x + self.L0 * self.s1
+        return self.k1 * x + self.L * self.s1
 
-    # 基岩表面函数
     def slope_base(self, x):
-        h = self.k1 * x + self.L0 * self.s1
-        return h
+        return self.k1 * x + self.L * self.s1
 
-    # 融冰体积随时间变化
     def volume(self, t):
+        if self.ro <= 0:
+            return np.zeros_like(np.asarray(t, dtype=float))
         ratio = t / (self.ro * self.tc)
-        v = 1.26 * self.vf * (np.exp(-0.2 * ratio) - np.exp(-3.73 * np.square(ratio)))
-        return v
+        return 1.26 * self.vf * (np.exp(-0.2 * ratio) - np.exp(-3.73 * np.square(ratio)))
 
-    # 融冰水流强度
     def H(self, t, v):
-        Lambda = self.Ks / self.L0
+        Lambda = self.Ks / self.L
         dt = t[1] - t[0]
         df = np.gradient(v, dt)
-        h = (self.ri * df / (self.Af * self.rw) - self.Ks * self.s1) * np.exp(-Lambda * t)
-        return h
+        return (self.ri * df / (self.Af * self.rw) - self.Ks * self.s1) * np.exp(-Lambda * t)
 
-    # 安全系数计算
     def factor_of_safety(self, t):
-        x0 = -self.L0 * self.c1 / self.k2
+        x0 = -self.L * self.c1 / self.k2
         v = self.volume(t)
-        h_ice = (self.vf - v) / (self.L0 * self.c1)
-
-        # 与参考软件一致：scipy quad 精确积分剖面面积
+        h_ice = (self.vf - v) / (self.L * self.c1)
         area = (quad(self._surface_scalar, x0, 0)[0]
                 - quad(self._base_scalar, x0, 0)[0])
-
-        # 滑体重量
-        m = self.rs * area + self.ri * h_ice * self.L0 * self.c1
+        m = self.rs * area + self.ri * h_ice * self.L * self.c1
         HH = -self.H(t, v)
-        # 注意：H 的单位是 m/s，乘时间步 dt 才是水头高度 m；
-        # 原实现误用空间步长 dx，量纲变成 m²/s。
         ht = (t[1] - t[0]) * np.cumsum(HH, axis=0)
 
-        # 抗滑力 & 下滑力
-        resist = self.c_ * self.L0 + (m * self.c1 - 0.5 * self.rw * ht * self.L0 -
-                                      0.5 * self.s1 * self.rw * np.square(ht)) * np.tan(np.radians(self.theta_))
-        drive = m * self.s1 + 0.5 * self.c1 * self.rw * np.square(ht)
-        fos = resist / drive
-        return fos
+        if self.rb == 0:
+            resist = self.c_ * self.L + (
+                m * self.c1
+                - 0.5 * self.rw * ht * self.L
+                - 0.5 * self.s1 * self.rw * np.square(ht)
+            ) * np.tan(np.radians(self.theta_))
+            drive = m * self.s1 + 0.5 * self.c1 * self.rw * np.square(ht)
+        else:
+            n2 = self.rs * (
+                quad(self._surface_scalar, x0, -self.rb * self.c1)[0]
+                - quad(self._base_scalar, x0, -self.rb * self.c1)[0]
+            ) + self.ri * h_ice * self.rb * self.c1 - 0.5 * self.rw * ht * np.square(self.rb) / self.L
+            n1 = self.rs * (
+                quad(self._surface_scalar, -self.rb * self.c1, 0)[0]
+                - quad(self._base_scalar, -self.rb * self.c1, 0)[0]
+            ) + self.ri * h_ice * self.L0 * self.c1 - 0.5 * (
+                self.rw * ht * self.rb / self.L + self.rw * ht
+            ) * self.L0 - 0.5 * self.s1 * self.rw * np.square(ht)
+            resist = (self.c_ * self.L0 + self.c * self.rb
+                      + np.tan(np.radians(self.theta_)) * n1
+                      + np.tan(np.radians(self.theta2)) * n2)
+            drive = m * self.s1 + 0.5 * self.c1 * self.rw * np.square(ht)
 
-    # 主运行函数
+        with np.errstate(divide='ignore', invalid='ignore'):
+            return resist / drive
+
     def run(self):
         t = self.t
         fos = self.factor_of_safety(t)
-        # 输出完整数组（无省略、无格式、Java可直接解析）
         t_out, fos_out = downsample_curve(t, fos)
         finite = fos[np.isfinite(fos)]
         data = {
@@ -133,23 +148,17 @@ class bedding():
             "minFos": float(np.min(finite)) if finite.size else 1.0,
             "maxFos": float(np.max(finite)) if finite.size else 1.0,
             "iceVolume": float(self.vf),
-            "debrisVolume": float(self.vf * 3.0)
+            "debrisVolume": float(self.vf * 3.0),
         }
-        # 写入静态文件（兼容旧版前端）
         os.makedirs('src/main/resources/static', exist_ok=True)
         with open(r'src/main/resources/static/output_bedding.txt', 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
-        # 单行标记，Java 用 extractSentinel 读取
         print("RESULT_JSON=" + json.dumps(data, ensure_ascii=False))
 
-        # 打印 t 数组
-    #     print("t_array:", t)
-    # # 打印 fos 数组
-    #     print("fos_array:", fos)
-    #     print("result:",result)
 
-# ===================== 直接运行 =====================
 if __name__ == '__main__':
+    if len(sys.argv) < 11:
+        raise SystemExit("参数不足：需要至少 10 个参数")
     params = {
         "melt_duration": float(sys.argv[1]),
         "slope_angle": float(sys.argv[2]),
@@ -160,8 +169,9 @@ if __name__ == '__main__':
         "cohesion": float(sys.argv[7]),
         "friction_angle": float(sys.argv[8]),
         "rock_density": float(sys.argv[9]),
-        "permeability": float(sys.argv[10])
+        "permeability": float(sys.argv[10]),
+        "rock_bridge_length": float(sys.argv[11]) if len(sys.argv) > 11 else 0.0,
+        "bridge_cohesion": float(sys.argv[12]) if len(sys.argv) > 12 else 0.0,
+        "bridge_friction_angle": float(sys.argv[13]) if len(sys.argv) > 13 else 0.0,
     }
-
-    model = bedding(**params)
-    model.run()
+    bedding(**params).run()
