@@ -30,16 +30,14 @@ class bedding():
     """顺层冰岩体稳定系数模型，按新版参考软件直接移植。
 
     参数约定：
-    - theta / theta_：滑面倾角、滑面内摩擦角（度）
+    - theta：滑面倾角（度）；cohesion/friction_angle：岩体内聚力（MPa）与内摩擦角（度）
     - L0：滑面长度；rb：岩桥长度，L=L0+rb
-    - cohesion：滑面内聚力；bridge_cohesion：岩桥内聚力（MPa）
-    - friction_angle：滑面内摩擦角；bridge_friction_angle：岩桥内摩擦角（度）
+    - 滑面强度由程序内部按参考软件系数自动派生
     """
 
     def __init__(self, melt_duration, slope_angle, slide_angle, ice_thickness,
                  fissure_height, slide_length, cohesion, friction_angle,
-                 rock_density, permeability, rock_bridge_length=0.0,
-                 bridge_cohesion=0.0, bridge_friction_angle=0.0):
+                 rock_density, permeability, rock_bridge_length=0.0):
         self.t_total = float(melt_duration)
         self.alpha = float(slope_angle)
         self.theta = float(slide_angle)
@@ -48,10 +46,11 @@ class bedding():
         self.L0 = max(0.0, float(slide_length))
         self.rb = max(0.0, float(rock_bridge_length))
         self.L = self.rb + self.L0
-        self.c_ = float(cohesion) * 1e6
-        self.c = float(bridge_cohesion) * 1e6
-        self.theta_ = float(friction_angle)
-        self.theta2 = float(bridge_friction_angle)
+        # 新版参考软件只输入岩体强度，滑面强度在程序内部派生。
+        self.c = float(cohesion) * 1e6
+        self.c_ = self.c * 0.2
+        self.theta2 = float(friction_angle)
+        self.theta_ = np.degrees(np.arctan(np.tan(np.radians(self.theta2)) * 0.5))
         self.rs = float(rock_density) * 1000.0
         self.Ks = float(permeability)
 
@@ -171,7 +170,5 @@ if __name__ == '__main__':
         "rock_density": float(sys.argv[9]),
         "permeability": float(sys.argv[10]),
         "rock_bridge_length": float(sys.argv[11]) if len(sys.argv) > 11 else 0.0,
-        "bridge_cohesion": float(sys.argv[12]) if len(sys.argv) > 12 else 0.0,
-        "bridge_friction_angle": float(sys.argv[13]) if len(sys.argv) > 13 else 0.0,
     }
     bedding(**params).run()

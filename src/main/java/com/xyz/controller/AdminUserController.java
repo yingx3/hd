@@ -1222,9 +1222,7 @@ public class AdminUserController {
                 strOr(body, "fissure_height", "10"), strOr(body, "slide_length", "20"),
                 strOr(body, "cohesion", "15"), strOr(body, "friction_angle", "20"),
                 strOr(body, "rock_density", "20"), strOr(body, "permeability", "0.0001"),
-                strOr(body, "rock_bridge_length", "0"),
-                strOr(body, "bridge_cohesion", strOr(body, "cohesion", "15")),
-                strOr(body, "bridge_friction_angle", strOr(body, "friction_angle", "20"))));
+                strOr(body, "rock_bridge_length", "0")));
     }
 
     @PostMapping("/bedding_inverse")
@@ -1248,9 +1246,7 @@ public class AdminUserController {
                 strOr(body, "fracture", "0.5"), strOr(body, "cohesion", "15"),
                 strOr(body, "friction_angle", "20"), strOr(body, "rock_density", "20"),
                 strOr(body, "permeability", "0.0001"),
-                strOr(body, "rock_bridge_length", "0"),
-                strOr(body, "bridge_cohesion", strOr(body, "cohesion", "15")),
-                strOr(body, "bridge_friction_angle", strOr(body, "friction_angle", "20"))));
+                strOr(body, "rock_bridge_length", "0")));
     }
     private String str(Map<String, Object> body, String key) {
         Object v = body.get(key);
@@ -2710,8 +2706,6 @@ public class AdminUserController {
                 args.add(strOr(body, "rock_density", "20"));
                 args.add(strOr(body, "permeability", "0.0001"));
                 args.add(strOr(body, "rock_bridge_length", "5"));
-                args.add(strOr(body, "bridge_cohesion", strOr(body, "cohesion", "15")));
-                args.add(strOr(body, "bridge_friction_angle", strOr(body, "friction_angle", "20")));
             } else {
                 // 顺层：坡度角 + 滑面角 + 滑面长度（缺省用 sqrt(面积)）+ 岩桥与两类强度参数
                 scriptName = "bedding.py";
@@ -2726,8 +2720,6 @@ public class AdminUserController {
                 args.add(strOr(body, "rock_density", "20"));
                 args.add(strOr(body, "permeability", "0.0001"));
                 args.add(strOr(body, "rock_bridge_length", "5"));
-                args.add(strOr(body, "bridge_cohesion", strOr(body, "cohesion", "15")));
-                args.add(strOr(body, "bridge_friction_angle", strOr(body, "friction_angle", "20")));
             }
             List<String> cmd = new ArrayList<>();
             cmd.add(pythonExe);

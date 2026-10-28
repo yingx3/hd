@@ -33,8 +33,7 @@ class wedge:
 
     def __init__(self, melt_duration, slope_angle, normal_vector, ice_thickness,
                  square, slope_height, fracture, cohesion, friction_angle,
-                 rock_density, permeability, rock_bridge_length=0.0,
-                 bridge_cohesion=0.0, bridge_friction_angle=0.0):
+                 rock_density, permeability, rock_bridge_length=0.0):
         try:
             self.n1 = np.array([float(v) for v in str(normal_vector).split(',')])
         except Exception as exc:
@@ -42,6 +41,7 @@ class wedge:
         if self.n1.size != 3:
             raise ValueError("normal_vector 需为三维向量，例：1,2,1.3")
 
+        self.n1 = np.array([self.n1[0], -self.n1[1], self.n1[2]])
         self.n2 = np.array([-self.n1[0], self.n1[1], self.n1[2]])
         self.hi = float(ice_thickness)
         self.hs = float(slope_height)
@@ -49,10 +49,11 @@ class wedge:
         self.a2 = self.a1
         self.t_total = float(melt_duration)
         self.alpha = float(slope_angle)
-        self.c_ = float(cohesion) * 1e6
-        self.theta_ = float(friction_angle)
-        self.c = float(bridge_cohesion) * 1e6
-        self.theta = float(bridge_friction_angle)
+        # 新版参考软件只输入岩石强度，滑面强度在程序内部派生。
+        self.c = float(cohesion) * 1e6
+        self.theta = float(friction_angle)
+        self.c_ = self.c * 0.2
+        self.theta_ = np.arctan(0.5 * np.tan(np.radians(self.theta)))
         self.rs = float(rock_density) * 1000.0
         self.Ks = float(permeability)
         self.ra = max(0.0, float(rock_bridge_length))
@@ -74,7 +75,7 @@ class wedge:
         if direction[2] > 0:
             direction = -direction
         self.omga = np.radians(180 - np.degrees(np.arccos(np.dot(direction, z))))
-        self.norm_d = np.array([0.0, np.cos(self.omga), np.sin(self.omga)])
+        self.norm_d = np.array([0.0, -np.cos(self.omga), np.sin(self.omga)])
         self.d0 = abs(self.hs * np.tan(self.omga))
         if abs(self.d0) < 1e-12:
             raise ValueError("楔体几何参数 d0 不能为 0，请检查法向量与边坡高度")
@@ -93,7 +94,7 @@ class wedge:
             raise ValueError("楔体几何参数 l1 不能为 0")
         self.hf = 2 * self.af / ((1 + self.ratio) * self.l1)
         self.sb = self.af
-        self.sbz = abs(self.sb * np.dot(normal1, z))
+        self.sbx = abs(self.sb * np.dot(normal1, np.array([-1.0, 0.0, 0.0])))
         self.Af = 0.005
 
     @staticmethod
@@ -114,11 +115,11 @@ class wedge:
     def H(self, t):
         if abs(self.sb) < 1e-12:
             raise ValueError("楔体岩桥面积过小，无法计算渗透水头")
-        Lambda = self.Ks / self.sbz if abs(self.sbz) > 1e-12 else 0.0
+        Lambda = self.Ks / self.sbx if abs(self.sbx) > 1e-12 else 0.0
         v = self.volume(t)
         df = np.gradient(v, t[1] - t[0])
         q = self.ri * df / (self.Af * self.l1 * 2 * self.rw)
-        return (q - self.Ks * self.sbz / self.sb) * np.exp(-Lambda * t)
+        return (q - self.Ks * self.sbx / self.sb) * np.exp(-Lambda * t)
 
     def factor_of_safety(self, t):
         volume = self.volume(t)
@@ -137,7 +138,7 @@ class wedge:
                 (mass + self.ri * height) * np.sin(self.omga)
                 * np.tan(np.radians(self.theta_))
                 + 2 * self.c_ * self.a1
-                - water_pressure * np.dot(self.n1, self.norm_d)
+                - 2 * water_pressure * np.dot(self.n1, self.norm_d)
             )
         else:
             ratio3 = self.ratio ** 3
@@ -148,7 +149,7 @@ class wedge:
                 * np.tan(np.radians(self.theta_))
                 + 2 * self.c_ * self.af
                 + 2 * self.c * (self.a1 - self.af)
-                - water_pressure * np.dot(self.n1, self.norm_d)
+                - 2 * water_pressure * np.dot(self.n1, self.norm_d)
             )
         with np.errstate(divide='ignore', invalid='ignore'):
             return resistance / drive
@@ -200,7 +201,5 @@ if __name__ == '__main__':
         "rock_density": float(sys.argv[10]),
         "permeability": float(sys.argv[11]),
         "rock_bridge_length": float(sys.argv[12]) if len(sys.argv) > 12 else 0.0,
-        "bridge_cohesion": float(sys.argv[13]) if len(sys.argv) > 13 else 0.0,
-        "bridge_friction_angle": float(sys.argv[14]) if len(sys.argv) > 14 else 0.0,
     }
     wedge(**params).run()
