@@ -1353,6 +1353,10 @@ public class AdminUserController {
                     || !(cellsize > 0) || !(ncols > 0) || !(nrows > 0)) {
                 return ResponseEntity.internalServerError().body("溃决洪水示例帧网格信息不完整");
             }
+            double offsetEast = numOr(frameMeta.get("offsetEastM"), 0.0);
+            double offsetNorth = numOr(frameMeta.get("offsetNorthM"), 0.0);
+            west += offsetEast;
+            south += offsetNorth;
             double east = west + ncols * cellsize;
             double north = south + nrows * cellsize;
             String sourceCrs = strOr(frameMeta, "crs", "EPSG:32646");
@@ -1396,6 +1400,8 @@ public class AdminUserController {
             meta.put("cellsize", cellsize);
             meta.put("xllcorner", west);
             meta.put("yllcorner", south);
+            meta.put("offsetEastM", offsetEast);
+            meta.put("offsetNorthM", offsetNorth);
             meta.put("globalMax", numOr(frameMeta.get("globalMax"), 1.0));
             meta.put("centerLon", (minLon + maxLon) / 2.0);
             meta.put("centerLat", (minLat + maxLat) / 2.0);
