@@ -6,6 +6,7 @@ import lombok.Data;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
 
@@ -1281,6 +1282,161 @@ public class AdminUserController {
     }
 
     // ===================================================================== //
+    // ==================== 溃决洪水计算模型（静态示例帧渲染） ====================
+
+    @PostMapping(value = "/kuijue_start", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> runKuijue(
+            @RequestParam(value = "breach_lon", required = false) String breachLonText,
+            @RequestParam(value = "breach_lat", required = false) String breachLatText,
+            @RequestParam(value = "total_volume", required = false) String totalVolumeText,
+            @RequestParam(value = "initial_depth", required = false) String initialDepthText,
+            @RequestParam(value = "manning", required = false) String manningText,
+            @RequestParam(value = "grid_resolution", required = false) String gridResolutionText,
+            @RequestParam(value = "duration", required = false) String durationText,
+            @RequestParam(value = "dem", required = false) MultipartFile dem) {
+        try {
+            if (dem == null || dem.isEmpty()) {
+                return ResponseEntity.badRequest().body("请上传地形高程数据 DEM（.tif/.tiff）");
+            }
+            String demName = dem.getOriginalFilename() == null ? "" : dem.getOriginalFilename().toLowerCase(Locale.ROOT);
+            if (!(demName.endsWith(".tif") || demName.endsWith(".tiff"))) {
+                return ResponseEntity.badRequest().body("DEM 仅支持 .tif / .tiff 文件");
+            }
+
+            double breachLon = numOr(breachLonText, Double.NaN);
+            double breachLat = numOr(breachLatText, Double.NaN);
+            if (!Double.isFinite(breachLon) || !Double.isFinite(breachLat)) {
+                return ResponseEntity.badRequest().body("请在地图上选取溃口位置");
+            }
+            double totalVolume = numOr(totalVolumeText, Double.NaN);
+            double initialDepth = numOr(initialDepthText, 0.0);
+            double manning = numOr(manningText, 0.035);
+            double gridResolution = numOr(gridResolutionText, 10.0);
+            double duration = numOr(durationText, 3600.0);
+            if (!(totalVolume > 0)) return ResponseEntity.badRequest().body("溃决洪水总水量必须大于 0");
+            if (initialDepth < 0) return ResponseEntity.badRequest().body("初始水深不能小于 0");
+            if (!(manning > 0)) return ResponseEntity.badRequest().body("曼宁糙率系数必须大于 0");
+            if (!(gridResolution > 0)) return ResponseEntity.badRequest().body("计算网格分辨率必须大于 0");
+            if (!(duration > 0)) return ResponseEntity.badRequest().body("模拟总时长必须大于 0");
+
+            File dir = new File(projectRoot, "suanfa/kuijue");
+            File metaFile = new File(dir, "frames_meta.json");
+            if (!metaFile.isFile()) {
+                return ResponseEntity.internalServerError().body("溃决洪水示例帧元数据不存在");
+            }
+            Map<String, Object> frameMeta = OBJECT_MAPPER.readValue(
+                    metaFile, new TypeReference<Map<String, Object>>() {});
+            List<String> frameFiles = new ArrayList<>();
+            Object rawFiles = frameMeta.get("frameFiles");
+            if (rawFiles instanceof List) {
+                for (Object value : (List<?>) rawFiles) {
+                    String name = value == null ? "" : String.valueOf(value);
+                    if (!name.matches("Depth\\d+\\.txt")) {
+                        return ResponseEntity.internalServerError().body("溃决洪水帧文件名不合法: " + name);
+                    }
+                    if (!new File(dir, name).isFile()) {
+                        return ResponseEntity.internalServerError().body("溃决洪水帧文件缺失: " + name);
+                    }
+                    frameFiles.add(name);
+                }
+            }
+            if (frameFiles.isEmpty()) {
+                return ResponseEntity.internalServerError().body("溃决洪水示例帧为空");
+            }
+
+            double west = numOr(frameMeta.get("xllcorner"), Double.NaN);
+            double south = numOr(frameMeta.get("yllcorner"), Double.NaN);
+            double cellsize = numOr(frameMeta.get("cellsize"), Double.NaN);
+            double ncols = numOr(frameMeta.get("ncols"), Double.NaN);
+            double nrows = numOr(frameMeta.get("nrows"), Double.NaN);
+            if (!Double.isFinite(west) || !Double.isFinite(south)
+                    || !(cellsize > 0) || !(ncols > 0) || !(nrows > 0)) {
+                return ResponseEntity.internalServerError().body("溃决洪水示例帧网格信息不完整");
+            }
+            double east = west + ncols * cellsize;
+            double north = south + nrows * cellsize;
+            String sourceCrs = strOr(frameMeta, "crs", "EPSG:32646");
+
+            CoordinateReferenceSystem utm = CRS.decode(sourceCrs, true);
+            CoordinateReferenceSystem wgs = CRS.decode("EPSG:4326", true);
+            MathTransform toWgs = CRS.findMathTransform(utm, wgs, true);
+            double[][] corners = {
+                    {west, south}, {west, north}, {east, south}, {east, north}
+            };
+            double minLon = Double.POSITIVE_INFINITY;
+            double minLat = Double.POSITIVE_INFINITY;
+            double maxLon = Double.NEGATIVE_INFINITY;
+            double maxLat = Double.NEGATIVE_INFINITY;
+            for (double[] corner : corners) {
+                double[] dst = new double[2];
+                toWgs.transform(corner, 0, dst, 0, 1);
+                minLon = Math.min(minLon, dst[0]);
+                minLat = Math.min(minLat, dst[1]);
+                maxLon = Math.max(maxLon, dst[0]);
+                maxLat = Math.max(maxLat, dst[1]);
+            }
+
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("demName", dem.getOriginalFilename());
+            params.put("demSize", dem.getSize());
+            params.put("breachLon", breachLon);
+            params.put("breachLat", breachLat);
+            params.put("totalVolume", totalVolume);
+            params.put("initialDepth", initialDepth);
+            params.put("manning", manning);
+            params.put("gridResolution", gridResolution);
+            params.put("duration", duration);
+
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("model", "kuijue");
+            meta.put("field", "water");
+            meta.put("sourceCrs", sourceCrs);
+            meta.put("ncols", (int) ncols);
+            meta.put("nrows", (int) nrows);
+            meta.put("cellsize", cellsize);
+            meta.put("xllcorner", west);
+            meta.put("yllcorner", south);
+            meta.put("globalMax", numOr(frameMeta.get("globalMax"), 1.0));
+            meta.put("centerLon", (minLon + maxLon) / 2.0);
+            meta.put("centerLat", (minLat + maxLat) / 2.0);
+            meta.put("frameLabels", frameMeta.get("frameTimes"));
+            meta.put("staticDemo", true);
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("status", "ok");
+            response.put("model", "kuijue");
+            response.put("params", params);
+            response.put("ascBase", "/testapi/admin/user/kuijue_frames");
+            response.put("frameFiles", frameFiles);
+            response.put("frameCount", frameFiles.size());
+            response.put("bbox", Arrays.asList(minLon, minLat, maxLon, maxLat));
+            response.put("meta", meta);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body("溃决洪水模型启动失败: " + e.getMessage());
+        }
+    }
+
+    @GetMapping("/kuijue_frames/{fileName:.+}")
+    public ResponseEntity<?> getKuijueFrame(@PathVariable String fileName) {
+        if (fileName == null || !fileName.matches("Depth\\d+\\.txt")) {
+            return ResponseEntity.badRequest().body("非法帧文件名");
+        }
+        try {
+            File dir = new File(projectRoot, "suanfa/kuijue").getCanonicalFile();
+            File file = new File(dir, fileName).getCanonicalFile();
+            if (!file.getPath().startsWith(dir.getPath() + File.separator) || !file.isFile()) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .contentLength(file.length())
+                    .body(new FileSystemResource(file));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("读取溃决洪水帧失败: " + e.getMessage());
+        }
+    }
     // 冰岩崩动力学模型（Pro）：调用 suanfa/Pro/python_port 数值内核
     // ===================================================================== //
 
