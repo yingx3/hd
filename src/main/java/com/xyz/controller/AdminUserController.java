@@ -1223,7 +1223,8 @@ public class AdminUserController {
                 strOr(body, "fissure_height", "10"), strOr(body, "slide_length", "20"),
                 strOr(body, "cohesion", "15"), strOr(body, "friction_angle", "20"),
                 strOr(body, "rock_density", "20"), strOr(body, "permeability", "0.0001"),
-                strOr(body, "rock_bridge_length", "0")));
+                strOr(body, "rock_bridge_length", "0"),
+                strOr(body, "plane_normal_depth", "1")));
     }
 
     @PostMapping("/bedding_inverse")
@@ -1235,7 +1236,8 @@ public class AdminUserController {
                 strOr(body, "fracture_tensile_strength", strOr(body, "friction_angle", "20")),
                 strOr(body, "rock_tensile_strength", strOr(body, "cohesion", "15")),
                 strOr(body, "rock_density", "20"), strOr(body, "permeability", "0.0001"),
-                strOr(body, "rock_bridge_length", "0")));
+                strOr(body, "rock_bridge_length", "0"),
+                strOr(body, "plane_normal_depth", "1")));
     }
 
     @PostMapping("/bedding_wedge")
@@ -2849,6 +2851,7 @@ public class AdminUserController {
                 args.add(strOr(body, "rock_density", "20"));
                 args.add(strOr(body, "permeability", "0.0001"));
                 args.add(strOr(body, "rock_bridge_length", "5"));
+                args.add(strOr(body, "plane_normal_depth", "1"));
             } else if (mode == 3) {
                 // 楔形：法向量 + 滑面面积（缺省用源区面积）+ 边坡高度 + 岩桥与两类强度参数
                 scriptName = "bedding_wedget.py";
@@ -2882,6 +2885,7 @@ public class AdminUserController {
                 args.add(strOr(body, "rock_density", "20"));
                 args.add(strOr(body, "permeability", "0.0001"));
                 args.add(strOr(body, "rock_bridge_length", "5"));
+                args.add(strOr(body, "plane_normal_depth", "1"));
             }
             List<String> cmd = new ArrayList<>();
             cmd.add(pythonExe);

@@ -37,7 +37,7 @@ class bedding():
 
     def __init__(self, melt_duration, slope_angle, slide_angle, ice_thickness,
                  fissure_height, slide_length, cohesion, friction_angle,
-                 rock_density, permeability, rock_bridge_length=0.0):
+                 rock_density, permeability, rock_bridge_length=0.0, plane_normal_depth=1.0):
         self.t_total = float(melt_duration)
         self.alpha = float(slope_angle)
         self.theta = float(slide_angle)
@@ -46,6 +46,7 @@ class bedding():
         self.L0 = max(0.0, float(slide_length))
         self.rb = max(0.0, float(rock_bridge_length))
         self.L = self.rb + self.L0
+        self.plane_normal_depth = float(plane_normal_depth)
         # 新版参考软件只输入岩体强度，滑面强度在程序内部派生。
         self.c = float(cohesion) * 1e6
         self.c_ = self.c * 0.2
@@ -54,6 +55,8 @@ class bedding():
         self.rs = float(rock_density) * 1000.0
         self.Ks = float(permeability)
 
+        if not (self.plane_normal_depth > 0):
+            raise ValueError("平面法向深度必须大于 0")
         if not (self.L > 0):
             raise ValueError("滑面长度与岩桥长度之和必须大于 0")
         self.t = build_time_axis(self.t_total)
@@ -170,5 +173,6 @@ if __name__ == '__main__':
         "rock_density": float(sys.argv[9]),
         "permeability": float(sys.argv[10]),
         "rock_bridge_length": float(sys.argv[11]) if len(sys.argv) > 11 else 0.0,
+        "plane_normal_depth": float(sys.argv[12]) if len(sys.argv) > 12 else 1.0,
     }
     bedding(**params).run()

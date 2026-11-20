@@ -46,7 +46,7 @@ class Anti:
     def __init__(self, melt_duration, slope_angle, inverse_angle, ice_thickness,
                  slope_height, bedding_space, fracture_tensile_strength,
                  rock_tensile_strength, rock_density, permeability,
-                 rock_bridge_length=0.0):
+                 rock_bridge_length=0.0, plane_normal_depth=1.0):
         self.mu = 0.3
         self.eta = 0.5
         self.gamma_water_N_m3 = 10.0
@@ -67,7 +67,10 @@ class Anti:
         self.slope_height_m = float(slope_height)
         self.strip_width_m = float(bedding_space)
         self.rock_bridge_length_m = max(0.0, float(rock_bridge_length))
+        self.plane_normal_depth = float(plane_normal_depth)
 
+        if not (self.plane_normal_depth > 0):
+            raise ValueError("平面法向深度必须大于 0")
         if not (self.t > 0):
             raise ValueError("融冰时长必须大于 0")
         if not (self.slope_height_m > 0):
@@ -271,5 +274,6 @@ if __name__ == '__main__':
         "rock_density": float(sys.argv[9]),
         "permeability": float(sys.argv[10]),
         "rock_bridge_length": float(sys.argv[11]) if len(sys.argv) > 11 else 0.0,
+        "plane_normal_depth": float(sys.argv[12]) if len(sys.argv) > 12 else 1.0,
     }
     Anti(**params).run()
