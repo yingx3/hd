@@ -70,7 +70,7 @@ class Anti:
         self.plane_normal_depth = float(plane_normal_depth)
 
         if not (self.plane_normal_depth > 0):
-            raise ValueError("平面法向深度必须大于 0")
+            raise ValueError("宽度必须大于 0")
         if not (self.t > 0):
             raise ValueError("融冰时长必须大于 0")
         if not (self.slope_height_m > 0):

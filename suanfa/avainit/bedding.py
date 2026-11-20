@@ -56,7 +56,7 @@ class bedding():
         self.Ks = float(permeability)
 
         if not (self.plane_normal_depth > 0):
-            raise ValueError("平面法向深度必须大于 0")
+            raise ValueError("宽度必须大于 0")
         if not (self.L > 0):
             raise ValueError("滑面长度与岩桥长度之和必须大于 0")
         self.t = build_time_axis(self.t_total)
