@@ -76,13 +76,13 @@ class bedding():
 
     def slope_surface(self, x):
         h = self.k1 * x + self.L * self.s1 + self.hs
-        mask = x <= (self.L * (self.s1 - self.c1) + self.hs) / (self.k2 - self.k1)
-        h[mask] = self.k2 * x[mask] + self.L * self.c1
+        mask = x <= (self.L * (self.s1 - self.k2 * self.c1) + self.hs) / (self.k2 - self.k1)
+        h[mask] = self.k2 * x[mask] + self.k2 * self.L * self.c1
         return h
 
     def _surface_scalar(self, x):
-        if x <= (self.L * (self.s1 - self.c1) + self.hs) / (self.k2 - self.k1):
-            return self.k2 * x + self.L * self.c1
+        if x <= (self.L * (self.s1 - self.k2 * self.c1) + self.hs) / (self.k2 - self.k1):
+            return self.k2 * x + self.k2 * self.L * self.c1
         return self.k1 * x + self.L * self.s1 + self.hs
 
     def _base_scalar(self, x):
